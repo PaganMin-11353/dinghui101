@@ -40,7 +40,6 @@ class SVDModel:
         self.model = surSVD(
             n_factors=self.n_factors,
             n_epochs=self.n_epochs,
-            learning_rate=self.learning_rate,
             reg_all=self.reg_all
         )
 
@@ -60,6 +59,7 @@ class SVDModel:
     def _load_items(self) -> pd.DataFrame:
         items = load_item_df(
             size=self.size,
+            item_datapath=maybe_download(self.size, "u.item"),
             item_col="MovieId",
             title_col="Title",
             genres_col="Genres",
@@ -68,7 +68,7 @@ class SVDModel:
         return items
 
     def _load_user_features(self) -> Union[pd.DataFrame, None]:
-        user_features = load_user_features(self.size)
+        user_features = load_user_features(maybe_download("100k", "u.user"))
         return user_features
 
 
