@@ -1,19 +1,14 @@
-from .base_model import BaseModel
+
 from utils.dataloader import load_data_df, load_item_df, load_user_features, DATA_FORMAT, maybe_download
 
-import os
-import numpy as np
 import pandas as pd
 from typing import Any, Tuple, Dict, Union
 from typeguard import typechecked
 
-import torch
-import torch.nn as nn
 from surprise import SVD as surSVD
 from surprise import Dataset, Reader
 from surprise import accuracy
 from surprise.model_selection import train_test_split
-
 
 @typechecked
 class SVDModel:
