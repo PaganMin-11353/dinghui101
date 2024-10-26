@@ -81,7 +81,7 @@ def maybe_download_and_unzip(url, dest_path):
 
 def download_movielens(size):
     if size not in DATA_FORMAT:
-        raise ValueError(f"Invalid size: {size}. Please use '100k'.")
+        raise ValueError(f"Invalid size: {size}.")
 
     url = "https://files.grouplens.org/datasets/movielens/ml-" + size + ".zip"
 
@@ -122,8 +122,8 @@ def load_data_df(size):
     return data
 
 #################load_data_df use case example ###########
-data = load_data_df("1m") # "100k or 1m"
-print(data)
+# data = load_data_df("1m") # "100k or 1m"
+# print(data)
 #################
 
 # 100K data genres index to string mapper. For 1m, 10m, and 20m, the genres labels are already in the dataset.
@@ -212,8 +212,8 @@ def load_item_df(size, item_datapath, item_col, title_col=None, genres_col=None,
 #################load_item_df use case example ###########
 # use example, set the cols you want, if you not set title_col, it will not return
 
-# filepath = maybe_download("100k", "u.item")
-# items = load_item_df("100k", filepath,
+# filepath = maybe_download("1m", "u.item")
+# items = load_item_df("1m", filepath,
 #         item_col="item",
 #         title_col="title",
 #         genres_col="genres",
