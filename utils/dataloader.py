@@ -111,10 +111,10 @@ def maybe_download(size, data_name):
         print("file is already exist")
     return filepath
 
-# To load UserId, MovieId, Rating and Timestamp from u.data
+# To load UserId, ItemId, Rating and Timestamp from u.data
 def load_data_df(size):
     COL_USER = "UserId"
-    COL_ITEM = "MovieId"
+    COL_ITEM = "ItemId"
     COL_RATING = "Rating"
     COL_TIMESTAMP = "Timestamp"
     filepath = maybe_download(size, "u.data")
