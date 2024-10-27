@@ -3,7 +3,7 @@ from models.svd_model import SVDModel
 
 def svd_model_benchmark(size):
     svd_model = SVDModel(size, n_factors=200, n_epochs=30)
-    data = svd_model.prepare_training_data()
+    svd_model.prepare_training_data()
     svd_model.train()
     predictions = svd_model.predict()
 
