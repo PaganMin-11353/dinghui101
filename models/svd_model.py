@@ -1,5 +1,4 @@
 
-from utils.dataloader import load_data_df, load_item_df, load_user_features, DATA_FORMAT, maybe_download
 import numpy as np
 import pandas as pd
 from typing import Any, Tuple, Dict, Union
@@ -7,9 +6,8 @@ from typeguard import typechecked
 
 from surprise import SVD as surSVD
 from surprise import Dataset, Reader
-from surprise import accuracy
-from surprise.model_selection import train_test_split
-from .data_split import python_random_split
+from utils.data_split import python_random_split
+from utils.dataloader import load_data_df, DATA_FORMAT
 @typechecked
 class SVDModel:
     def __init__(

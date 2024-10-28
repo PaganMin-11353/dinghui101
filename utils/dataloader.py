@@ -3,9 +3,7 @@ import requests
 import zipfile
 import pandas as pd
 import re
-import numpy as np
-import sys
-sys.path.append('.')
+
 class DataFormat:
     def __init__(
         self,
