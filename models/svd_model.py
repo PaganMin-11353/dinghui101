@@ -38,17 +38,6 @@ class SVDModel:
             reg_all=self.reg_all
         )
 
-        self.ratings = self._load_ratings()
-
-        # Rename columns to match Surprise's expectations
-        self.ratings.rename(columns={'UserId': 'user', 'ItemId': 'item', 'Rating': 'rating'}, inplace=True)
-
-
-    # TODO
-    def _load_ratings(self) -> pd.DataFrame:
-        ratings = load_data_df(self.size)
-        return ratings
-
     def prepare_training_data(self) -> None:
         data = load_data_df(self.size)
         data = data[['UserId', 'ItemId', 'Rating']]
