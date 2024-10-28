@@ -1,7 +1,7 @@
 from utils.metrics import calculate_rating_metrics, calculate_ranking_metrics
 from models.svd_model import SVDModel
 
-def svd_model_benchmark(size):
+def svd_model_train_and_evaluate(size):
     svd_model = SVDModel(size, n_factors=200, n_epochs=30)
     svd_model.prepare_training_data()
     svd_model.train()
