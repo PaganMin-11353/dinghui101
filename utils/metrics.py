@@ -11,12 +11,12 @@ from sklearn.metrics import (
 def merge_rating_correct_pred(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
-    col_rating="Rating",
+    col_user="user",
+    col_item="item",
+    col_rating="rating",
     col_prediction="prediction",
 ):
-    """Join truth and prediction data frames on userID and itemID and return the true
+    """Join truth and prediction data frames on user and item and return the true
     and predicted rated with the correct index
 
     Returns:
@@ -39,9 +39,9 @@ def merge_rating_correct_pred(
 def rmse(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
-    col_rating="Rating",
+    col_user="user",
+    col_item="item",
+    col_rating="rating",
     col_prediction="prediction",
 ):
     """Calculate Root Mean Squared Error
@@ -63,9 +63,9 @@ def rmse(
 def mae(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
-    col_rating="Rating",
+    col_user="user",
+    col_item="item",
+    col_rating="rating",
     col_prediction="prediction",
 ):
     """Calculate Mean Absolute Error.
@@ -86,9 +86,9 @@ def mae(
 def rsquared(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
-    col_rating="Rating",
+    col_user="user",
+    col_item="item",
+    col_rating="rating",
     col_prediction="prediction",
 ):
     """Calculate R squared
@@ -110,9 +110,9 @@ def rsquared(
 def exp_var(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
-    col_rating="Rating",
+    col_user="user",
+    col_item="item",
+    col_rating="rating",
     col_prediction="prediction",
 ):
     """Calculate explained variance.
@@ -130,7 +130,7 @@ def exp_var(
     )
     return explained_variance_score(y_true, y_pred)
 
-def get_top_k_items(dataframe, col_user="UserID", col_rating="Rating", k=10):
+def get_top_k_items(dataframe, col_user="user", col_rating="rating", k=10):
     """Get the input customer-item-rating tuple in the format of Pandas
     DataFrame, output a Pandas DataFrame in the dense format of top k items
     for each user.
@@ -206,8 +206,8 @@ def merge_ranking_true_pred(
 def _get_reciprocal_rank(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
+    col_user="user",
+    col_item="item",
     col_prediction="prediction",
     relevancy_method="top_k",
     k=10,
@@ -239,8 +239,8 @@ def _get_reciprocal_rank(
 def map(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
+    col_user="user",
+    col_item="item",
     col_prediction="prediction",
     relevancy_method="top_k",
     k=10,
@@ -270,9 +270,9 @@ def map(
 def ndcg_at_k(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
-    col_rating="Rating",
+    col_user="user",
+    col_item="item",
+    col_rating="rating",
     col_prediction="prediction",
     relevancy_method="top_k",
     k=10,
@@ -348,8 +348,8 @@ def ndcg_at_k(
 def precision_at_k(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
+    col_user="user",
+    col_item="item",
     col_prediction="prediction",
     relevancy_method="top_k",
     k=10,
@@ -379,8 +379,8 @@ def precision_at_k(
 def recall_at_k(
     rating_true,
     rating_pred,
-    col_user="UserId",
-    col_item="ItemId",
+    col_user="user",
+    col_item="item",
     col_prediction="prediction",
     relevancy_method="top_k",
     k=10,
