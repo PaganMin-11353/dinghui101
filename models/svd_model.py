@@ -55,13 +55,11 @@ class SVDModel:
         data = self.test_pre
         predictions = [
            self.model.predict(getattr(row, "user"), getattr(row, "item"))
-        #    self.model.predict(getattr(row, "UserId"), getattr(row, "ItemId"))
             for row in data.itertuples()
         ]
         predictions = pd.DataFrame(predictions)
         predictions = predictions.rename(
             index=str, columns={"uid": "user", "iid": "item", "est": "prediction"}
-            # index=str, columns={"uid": "UserId", "iid": "ItemId", "est": "prediction"}
         )
         return predictions.drop(["details", "r_ui"], axis="columns")
 
@@ -70,8 +68,6 @@ class SVDModel:
         preds_lst = []
         users = data["user"].unique()
         items = data["item"].unique()
-        # users = data["UserId"].unique()
-        # items = data["ItemId"].unique()
 
         for user in users:
             for item in items:
@@ -86,7 +82,6 @@ class SVDModel:
         tempdf = pd.concat(
             [
                 data[["user", "item"]],
-                # data[["UserId", "ItemId"]],
                 pd.DataFrame(
                     data=np.ones(data.shape[0]), columns=["dummycol"], index=data.index
                 ),
@@ -94,5 +89,4 @@ class SVDModel:
             axis=1,
         )
         merged = pd.merge(tempdf, all_predictions, on=["user", "item"], how="outer")
-        # merged = pd.merge(tempdf, all_predictions, on=["UserId", "ItemId"], how="outer")
         return merged[merged["dummycol"].isnull()].drop("dummycol", axis=1)
