@@ -401,7 +401,13 @@ class ClusGCNModel():
 
             self.logger.info(f"Epoch {epoch}/{self.epochs}, Loss: {loss.item():.4f}")
             print(f"Epoch {epoch}/{self.epochs}, Loss: {loss.item():.4f}")
-        
+    
+    def _predict_scores(self) -> torch.Tensor:
+        self.model.eval()
+        with torch.no_grad():
+            user_emb, item_emb = self.model(self.adj_norm)
+            scores = torch.matmul(user_emb, item_emb.t())
+        return scores
     
     
     def predict(self) -> pd.DataFrame:
