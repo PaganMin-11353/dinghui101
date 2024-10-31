@@ -66,7 +66,7 @@ class SVDModel:
         return predictions.drop(["details", "r_ui"], axis="columns")
 
     def recommend_k_svd(self) -> pd.DataFrame:
-        data =  data = self.train_pre
+        data = self.train_pre
         preds_lst = []
         users = data["user"].unique()
         items = data["item"].unique()
