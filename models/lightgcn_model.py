@@ -69,6 +69,7 @@ class LightGCNModel():
         epochs: int = 10,
         batch_size: int = 1024,
         num_negatives: int =4,
+        train_alpha: float = 1.0,
         device: str = 'auto'  # 'auto', 'cuda', 'mps', or 'cpu'
     ) -> None:
         super().__init__()
@@ -88,6 +89,7 @@ class LightGCNModel():
         self.epochs = epochs
         self.batch_size = batch_size
         self.num_negatives = num_negatives
+        self.train_alpha = train_alpha
         self.device = self._get_device(device)
 
         self.user2idx = {}
@@ -141,7 +143,7 @@ class LightGCNModel():
     def _load_ratings(self) -> pd.DataFrame:
         ratings = self.data_loader.load_ratings()
         self.logger.info("Data Loaded.")
-        print(ratings.head())
+        # print(ratings.head())
         return ratings
 
     def _load_items(self) -> pd.DataFrame:
@@ -304,6 +306,8 @@ class LightGCNModel():
 
         pos_user_ids = pos_df['user_idx'].values
         pos_item_ids = pos_df['item_idx'].values
+        pos_ratings = pos_df['rating'].values
+        
         neg_user_ids = neg_df['user_idx'].values
         neg_item_ids = neg_df['item_idx'].values
 
@@ -320,30 +324,43 @@ class LightGCNModel():
         neg_item_ids = neg_item_ids[:required_neg_samples]
 
         # 重复正样本以匹配负样本数量
-        pos_user_ids = np.repeat(pos_user_ids, self.num_negatives)
-        pos_item_ids = np.repeat(pos_item_ids, self.num_negatives)
-
-        pos_user_ids = torch.from_numpy(pos_user_ids).long().to(self.device)
-        pos_item_ids = torch.from_numpy(pos_item_ids).long().to(self.device)
-        neg_user_ids = torch.from_numpy(neg_user_ids).long().to(self.device)
-        neg_item_ids = torch.from_numpy(neg_item_ids).long().to(self.device)
+        pos_user_ids_bpr = np.repeat(pos_user_ids, self.num_negatives)
+        pos_item_ids_bpr = np.repeat(pos_item_ids, self.num_negatives)
+        
+        pos_user_ids_bpr = torch.from_numpy(pos_user_ids_bpr).long().to(self.device)
+        pos_item_ids_bpr = torch.from_numpy(pos_item_ids_bpr).long().to(self.device)
+        neg_user_ids_bpr = torch.from_numpy(neg_user_ids).long().to(self.device)
+        neg_item_ids_bpr = torch.from_numpy(neg_item_ids).long().to(self.device)
+        
+        # For rating loss, use positive samples only
+        pos_user_ids_reg = torch.from_numpy(pos_user_ids).long().to(self.device)
+        pos_item_ids_reg = torch.from_numpy(pos_item_ids).long().to(self.device)
+        pos_ratings_reg = torch.from_numpy(pos_ratings).float().to(self.device)
 
         for epoch in range(1, self.epochs + 1):
             self.optimizer.zero_grad()
 
             # forward
             user_emb, item_emb = self.model(self.adj_norm)
-
-            u_pos = user_emb[pos_user_ids]    # (N, embedding_dim)
-            i_pos = item_emb[pos_item_ids]    # (N, embedding_dim)
-            u_neg = user_emb[neg_user_ids]    # (N, embedding_dim)
-            i_neg = item_emb[neg_item_ids]    # (N, embedding_dim)
-
+        
+            # BPR Loss
+            u_pos = user_emb[pos_user_ids_bpr]    # (N, embedding_dim)
+            i_pos = item_emb[pos_item_ids_bpr]    # (N, embedding_dim)
+            u_neg = user_emb[neg_user_ids_bpr]    # (N, embedding_dim)
+            i_neg = item_emb[neg_item_ids_bpr]    # (N, embedding_dim)
+            
             pos_scores = torch.sum(u_pos * i_pos, dim=1)  # (N,)
             neg_scores = torch.sum(u_neg * i_neg, dim=1)  # (N,)
-
-            # BPR loss：-log(sigmoid(pos - neg))
-            loss = -torch.mean(torch.log(torch.sigmoid(pos_scores - neg_scores) + 1e-10))
+            
+            # BPR loss
+            bpr_loss = -torch.mean(torch.log(torch.sigmoid(pos_scores - neg_scores) + 1e-10))
+            
+            # MSE Loss for rating prediction
+            pred_ratings = torch.sum(user_emb[pos_user_ids_reg] * item_emb[pos_item_ids_reg], dim=1)  # (N,)
+            mse_loss = nn.functional.mse_loss(pred_ratings, pos_ratings_reg)
+            
+            # Combine losses
+            loss = bpr_loss + self.train_alpha * mse_loss
 
             loss.backward()
             self.optimizer.step()
@@ -362,13 +379,16 @@ class LightGCNModel():
         
         test_users = self.test_df['user_idx'].values
         test_items = self.test_df['item_idx'].values
-        test_scores = scores[test_users, test_items]
+        test_scores = scores[test_users, test_items].cpu().numpy()
 
         predictions = self.test_df.copy()
         predictions['prediction'] = test_scores
 
         predictions['user'] = predictions['user_idx'].map(self.idx2user)
         predictions['item'] = predictions['item_idx'].map(self.idx2item)
+
+        predictions['rating'] = predictions.apply(
+            lambda row: row['rating'] if row['label'] == 1 else 0, axis=1)
 
         return predictions[['user', 'item', 'prediction', 'rating']]
 
@@ -386,13 +406,14 @@ class LightGCNModel():
             'prediction': all_scores
         })
 
-        interacted = pd.concat([
-            self.train_df[self.train_df['label'] == 1][['user_idx', 'item_idx']],
-            self.test_df[self.test_df['label'] == 1][['user_idx', 'item_idx']]
-        ])
-        interacted_set = set(zip(interacted['user_idx'], interacted['item_idx']))
+        interacted = self.train_df[self.train_df['label'] == 1][['user_idx', 'item_idx']].drop_duplicates()
 
-        all_predictions = all_predictions[~all_predictions.apply(lambda row: (row['user_idx'], row['item_idx']) in interacted_set, axis=1)]
+        all_predictions = all_predictions.merge(
+            interacted.assign(interacted=True),
+            on=['user_idx', 'item_idx'],
+            how='left'
+        )
+        all_predictions = all_predictions[all_predictions['interacted'].isna()].drop(columns=['interacted'])
 
         top_k_items = get_top_k_items(
             dataframe=all_predictions.copy(),
@@ -404,7 +425,7 @@ class LightGCNModel():
         top_k_items['user'] = top_k_items['user_idx'].map(self.idx2user)
         top_k_items['item'] = top_k_items['item_idx'].map(self.idx2item)
 
-        return top_k_items[['user', 'item', 'prediction', 'rank']]
+        return top_k_items[['user', 'item', 'prediction']]
 
 
 
