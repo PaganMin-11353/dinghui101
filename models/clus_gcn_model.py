@@ -131,6 +131,7 @@ class ClusGCNModel():
 
         self.train_df = None
         self.test_df = None
+        self.test_pre = None
         self.graph = None
         self.adj_norm = None
 
@@ -234,6 +235,7 @@ class ClusGCNModel():
 
         train_df = pd.concat(train_list).reset_index(drop=True)
         test_df = pd.concat(test_list).reset_index(drop=True)
+        self.test_pre = test_df.copy()
 
         global_neg_set_train = set(zip(train_df['user_idx'], train_df['item_idx']))
         train_neg_df = self._generate_negative_samples(train_df, num_negatives=4, global_neg_set=global_neg_set_train)
@@ -400,6 +402,27 @@ class ClusGCNModel():
             self.logger.info(f"Epoch {epoch}/{self.epochs}, Loss: {loss.item():.4f}")
             print(f"Epoch {epoch}/{self.epochs}, Loss: {loss.item():.4f}")
         
+    
+    
+    def predict(self) -> pd.DataFrame:
+        scores = self._predict_scores()
+        
+        test_users = self.test_df['user_idx'].values
+        test_items = self.test_df['item_idx'].values
+        test_scores = scores[test_users, test_items].cpu().numpy()
+
+        predictions = self.test_df.copy()
+        predictions['prediction'] = test_scores
+
+        predictions['user'] = predictions['user_idx'].map(self.idx2user)
+        predictions['item'] = predictions['item_idx'].map(self.idx2item)
+
+        predictions['rating'] = predictions.apply(
+            lambda row: row['rating'] if row['label'] == 1 else 0, axis=1)
+
+        return predictions[['user', 'item', 'prediction', 'rating']]
+
+
     def recommend_k(self, k:int=10) -> pd.DataFrame:
         scores = self._predict_scores().cpu().numpy()
 
@@ -433,25 +456,6 @@ class ClusGCNModel():
         top_k_items['item'] = top_k_items['item_idx'].map(self.idx2item)
 
         return top_k_items[['user', 'item', 'prediction']]
-    
-    def predict(self) -> pd.DataFrame:
-        self.model.eval()
-        with torch.no_grad():
-            user_emb, item_emb = self.model(self.adj_norm)
-            scores = torch.matmul(user_emb, item_emb.t()).cpu().numpy()
-        
-        test_users = self.test_df['user_idx'].values
-        test_items = self.test_df['item_idx'].values
-        test_scores = scores[test_users, test_items]
-
-        predictions = self.test_df.copy()
-        predictions['score'] = test_scores
-
-        return predictions[['user_idx', 'item_idx', 'score']]
-
-
-    def recommend_k(self) -> Dict[str, float]:
-        pass
 
 
 def main():
