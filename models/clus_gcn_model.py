@@ -4,6 +4,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # from .base_model import BaseModel
 from utils.dataloader import DataLoader
+from utils.metrics import get_top_k_items
 # from sklearn.model_selection import train_test_split
 
 import pandas as pd
@@ -17,7 +18,7 @@ from torch_geometric.data import Data
 import logging
 
 class ClusGCN(nn.Module):
-    def __init__(self, num_users: int, num_items: int, embedding_dim: int, num_layers: int, embedding_path = os.path.join(sys.path[0], "embeddings")):
+    def __init__(self, num_users: int, num_items: int, embedding_dim: int, num_layers: int, embedding_path = r'embeddings/'):
         super(ClusGCN, self).__init__()
         print(sys.path)
         self.num_users = num_users
@@ -46,12 +47,13 @@ class ClusGCN(nn.Module):
     def _init_embeddings(self) -> None:
         nn.init.normal_(self.user_embedding.weight, std=0.1)
         nn.init.normal_(self.item_embedding.weight, std=0.1)
-        print(f'before:{self.user_embedding.weight}')
-        print(f'add : {self.age_hot_embedding}')
-        self.user_embedding.weight += self.age_hot_embedding
-        print(f'after: {self.user_embedding.weight}')
-        # nn.init.xavier_uniform_(self.user_embedding.weight)
-        # nn.init.xavier_uniform_(self.item_embedding.weight)
+
+        genre_embedding = self.genre_cat_layer(self.genre_hot_embedding).detach().clone().requires_grad_()
+        self.item_embedding.weight = torch.nn.Parameter(self.item_embedding.weight + genre_embedding)
+
+        age_embedding = self.age_cat_layer(self.age_hot_embedding).detach().clone().requires_grad_()
+        occupation_embedding = self.occupation_cat_layer(self.occupation_hot_embedding).detach().clone().requires_grad_()
+        self.user_embedding.weight = torch.nn.Parameter(self.user_embedding.weight + age_embedding + occupation_embedding)
 
     def forward(self, adj_norm) -> Tuple[torch.Tensor, torch.Tensor]:
         all_embeddings = torch.cat(
@@ -398,7 +400,40 @@ class ClusGCNModel():
             self.logger.info(f"Epoch {epoch}/{self.epochs}, Loss: {loss.item():.4f}")
             print(f"Epoch {epoch}/{self.epochs}, Loss: {loss.item():.4f}")
         
+    def recommend_k(self, k:int=10) -> pd.DataFrame:
+        scores = self._predict_scores().cpu().numpy()
 
+        user_indices = np.repeat(np.arange(self.num_users), self.num_items)
+        item_indices = np.tile(np.arange(self.num_items), self.num_users)
+        all_scores = scores.flatten()
+
+        all_predictions = pd.DataFrame({
+            'user_idx': user_indices,
+            'item_idx': item_indices,
+            'prediction': all_scores
+        })
+
+        interacted = self.train_df[self.train_df['label'] == 1][['user_idx', 'item_idx']].drop_duplicates()
+
+        all_predictions = all_predictions.merge(
+            interacted.assign(interacted=True),
+            on=['user_idx', 'item_idx'],
+            how='left'
+        )
+        all_predictions = all_predictions[all_predictions['interacted'].isna()].drop(columns=['interacted'])
+
+        top_k_items = get_top_k_items(
+            dataframe=all_predictions.copy(),
+            col_user="user_idx",
+            col_rating="prediction",
+            k=k
+        )
+
+        top_k_items['user'] = top_k_items['user_idx'].map(self.idx2user)
+        top_k_items['item'] = top_k_items['item_idx'].map(self.idx2item)
+
+        return top_k_items[['user', 'item', 'prediction']]
+    
     def predict(self) -> pd.DataFrame:
         self.model.eval()
         with torch.no_grad():

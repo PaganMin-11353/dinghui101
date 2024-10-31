@@ -428,9 +428,6 @@ class LightGCNModel():
         return top_k_items[['user', 'item', 'prediction']]
 
 
-
-
-
 def main():
     model = LightGCNModel(
         size="100k",
