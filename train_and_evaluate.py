@@ -22,7 +22,7 @@ def lgcn_model_train_and_evaluate(size):
         num_negatives=4,
         embedding_dim=64,
         learning_rate=0.01,
-        epochs=10,
+        epochs=1000,
         batch_size=1024,
         device='cpu'
     )
