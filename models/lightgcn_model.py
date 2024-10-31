@@ -4,11 +4,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # from .base_model import BaseModel
 from utils.dataloader import DataLoader
+from utils.metrics import get_top_k_items
 # from sklearn.model_selection import train_test_split
 
 import pandas as pd
 import numpy as np
-from typing import Tuple, Dict, Union
+from typing import Optional, Set, Tuple, Dict, Union
 from typeguard import typechecked
 
 import torch
@@ -32,10 +33,10 @@ class LightGCN(nn.Module):
         self._init_embeddings()
 
     def _init_embeddings(self) -> None:
-        nn.init.normal_(self.user_embedding.weight, std=0.1)
-        nn.init.normal_(self.item_embedding.weight, std=0.1)
-        # nn.init.xavier_uniform_(self.user_embedding.weight)
-        # nn.init.xavier_uniform_(self.item_embedding.weight)
+        # nn.init.normal_(self.user_embedding.weight, std=0.1)
+        # nn.init.normal_(self.item_embedding.weight, std=0.1)
+        nn.init.xavier_uniform_(self.user_embedding.weight)
+        nn.init.xavier_uniform_(self.item_embedding.weight)
 
     def forward(self, adj_norm) -> Tuple[torch.Tensor, torch.Tensor]:
         all_embeddings = torch.cat(
@@ -56,23 +57,6 @@ class LightGCN(nn.Module):
 
         return user_embeddings, item_embeddings
 
-    # def bpr_loss(self, users: torch.Tensor, pos_items: torch.Tensor, neg_items: torch.Tensor) -> torch.Tensor:
-    #     user_emb, item_emb = self.forward()
-
-    #     u_emb = user_emb[users]
-    #     pos_emb = item_emb[pos_items]
-    #     neg_emb = item_emb[neg_items]
-
-    #     pos_scores = torch.sum(u_emb * pos_emb, dim=1)
-    #     neg_scores = torch.sum(u_emb * neg_emb, dim=1)
-
-    #     loss = -torch.mean(torch.log(torch.sigmoid(pos_scores - neg_scores)))
-    #     return loss
-
-    # def get_embeddings(self) -> Tuple[torch.Tensor, torch.Tensor]:
-    #     user_embeddings, item_embeddings = self.forward()
-    #     return user_embeddings, item_embeddings
-
 
 @typechecked
 class LightGCNModel():
@@ -84,6 +68,7 @@ class LightGCNModel():
         learning_rate: float = 0.01,
         epochs: int = 10,
         batch_size: int = 1024,
+        num_negatives: int =4,
         device: str = 'auto'  # 'auto', 'cuda', 'mps', or 'cpu'
     ) -> None:
         super().__init__()
@@ -102,6 +87,7 @@ class LightGCNModel():
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.batch_size = batch_size
+        self.num_negatives = num_negatives
         self.device = self._get_device(device)
 
         self.user2idx = {}
@@ -115,6 +101,8 @@ class LightGCNModel():
         self.test_df = None
         self.graph = None
         self.adj_norm = None
+
+        self.test_pre = None
 
         self.model = None
         self.optimizer = None
@@ -172,8 +160,9 @@ class LightGCNModel():
         item_list = self.ratings['item'].unique().tolist()
 
         self.user2idx = {user: idx for idx, user in enumerate(user_list)}
-        self.item2idx = {item: idx for idx, item in enumerate(item_list)}
         self.idx2user = {idx: user for user, idx in self.user2idx.items()}
+
+        self.item2idx = {item: idx for idx, item in enumerate(item_list)}
         self.idx2item = {idx: item for item, idx in self.item2idx.items()}
 
         self.num_users = len(user_list)
@@ -182,21 +171,12 @@ class LightGCNModel():
         self.ratings['user_idx'] = self.ratings['user'].map(self.user2idx)
         self.ratings['item_idx'] = self.ratings['item'].map(self.item2idx)
 
-        # print("\nuser item map：")
-        # print(self.user2idx)
-        # print(self.item2idx)
-
         # train_df, test_df = train_test_split(
         #     self.ratings,
         #     test_size=0.3,
         #     random_state=42,
         #     stratify=self.ratings['user_idx']
         # )
-
-        # print("\Train set:")
-        # print(train_df.head())
-        # print("\Test set:")
-        # print(test_df.head())
 
         # train test split, keep 1 useritem for every user
         train_list = []
@@ -214,23 +194,22 @@ class LightGCNModel():
 
         train_df = pd.concat(train_list).reset_index(drop=True)
         test_df = pd.concat(test_list).reset_index(drop=True)
+        self.test_pre = test_df.copy()
 
-        global_neg_set_train = set(zip(train_df['user_idx'], train_df['item_idx']))
-        train_neg_df = self._generate_negative_samples(train_df, num_negatives=4, global_neg_set=global_neg_set_train)
+        global_neg_set = set(zip(self.ratings['user_idx'], self.ratings['item_idx']))
 
-        global_neg_set_test = global_neg_set_train.union(set(zip(test_df['user_idx'], test_df['item_idx'])))
-        test_neg_df = self._generate_negative_samples(test_df, num_negatives=4, global_neg_set=global_neg_set_test)
-
+        train_neg_df = self._generate_negative_samples(train_df, global_neg_set=global_neg_set)
+        test_neg_df = self._generate_negative_samples(test_df, global_neg_set=global_neg_set)
 
         # merge pos neg, label: pos 1 neg 0
         train_full_df = pd.concat([
-            train_df[['user_idx', 'item_idx']].assign(label=1),
-            train_neg_df[['user_idx', 'item_idx', 'label']]
+            train_df[['user_idx', 'item_idx', 'rating']].assign(label=1),
+            train_neg_df[['user_idx', 'item_idx', 'rating', 'label']]
         ], ignore_index=True)
 
         test_full_df = pd.concat([
-            test_df[['user_idx', 'item_idx']].assign(label=1),
-            test_neg_df[['user_idx', 'item_idx', 'label']]
+            test_df[['user_idx', 'item_idx', 'rating']].assign(label=1),
+            test_neg_df[['user_idx', 'item_idx', 'rating', 'label']]
         ], ignore_index=True)
 
         self.train_df = train_full_df
@@ -239,8 +218,8 @@ class LightGCNModel():
         self._build_graph()
         self._init_model()
     
-    def _generate_negative_samples(self, df, num_negatives=1, global_neg_set=None):
-        self.logger.info("Generating negative samples...")
+    def _generate_negative_samples(self, df: pd.DataFrame, global_neg_set: Optional[Set[tuple]] = None) -> pd.DataFrame:
+        self.logger.info("Generating negative samples...") 
     
         if global_neg_set is None:
             global_neg_set = set(zip(df['user_idx'], df['item_idx']))
@@ -251,7 +230,7 @@ class LightGCNModel():
         user_to_interacted_items = df.groupby('user_idx')['item_idx'].apply(set).to_dict()
         
         user_positive_counts = df['user_idx'].value_counts().to_dict()
-        user_neg_counts = {user: count * num_negatives for user, count in user_positive_counts.items()}
+        user_neg_counts = {user: count * self.num_negatives for user, count in user_positive_counts.items()}
         
         neg_samples = []
         
@@ -264,7 +243,7 @@ class LightGCNModel():
             else:
                 sampled_items = np.random.choice(available_items, size=neg_count, replace=False)
             
-            neg_samples.extend([{'user_idx': user, 'item_idx': int(item), 'label': 0} for item in sampled_items])
+            neg_samples.extend([{'user_idx': user, 'item_idx': int(item), 'rating': 0, 'label': 0} for item in sampled_items])
         
         neg_df = pd.DataFrame(neg_samples)
 
@@ -286,10 +265,12 @@ class LightGCNModel():
 
         src = np.concatenate([user_indices, item_indices])
         dst = np.concatenate([item_indices, user_indices])
+        
         edge_index_np = np.stack([src, dst], axis=0).astype(np.int64)
         edge_index = torch.tensor(edge_index_np, dtype=torch.long)
 
         data = Data(edge_index=edge_index, num_nodes=self.num_users + self.num_items)
+
         data = data.to(self.device)
 
         # adj_norm = self.normalize_adj(data.edge_index, data.num_nodes)
@@ -326,9 +307,8 @@ class LightGCNModel():
         neg_user_ids = neg_df['user_idx'].values
         neg_item_ids = neg_df['item_idx'].values
 
-        num_negatives = 4
         pos_len = len(pos_user_ids)
-        required_neg_samples = pos_len * num_negatives
+        required_neg_samples = pos_len * self.num_negatives
 
         # 检查负样本数量是否足够
         actual_neg_samples = len(neg_user_ids)
@@ -340,8 +320,8 @@ class LightGCNModel():
         neg_item_ids = neg_item_ids[:required_neg_samples]
 
         # 重复正样本以匹配负样本数量
-        pos_user_ids = np.repeat(pos_user_ids, num_negatives)
-        pos_item_ids = np.repeat(pos_item_ids, num_negatives)
+        pos_user_ids = np.repeat(pos_user_ids, self.num_negatives)
+        pos_item_ids = np.repeat(pos_item_ids, self.num_negatives)
 
         pos_user_ids = torch.from_numpy(pos_user_ids).long().to(self.device)
         pos_item_ids = torch.from_numpy(pos_item_ids).long().to(self.device)
@@ -351,7 +331,7 @@ class LightGCNModel():
         for epoch in range(1, self.epochs + 1):
             self.optimizer.zero_grad()
 
-            # forward prop
+            # forward
             user_emb, item_emb = self.model(self.adj_norm)
 
             u_pos = user_emb[pos_user_ids]    # (N, embedding_dim)
@@ -369,26 +349,65 @@ class LightGCNModel():
             self.optimizer.step()
 
             self.logger.info(f"Epoch {epoch}/{self.epochs}, Loss: {loss.item():.4f}")
-        
-
-    def predict(self) -> pd.DataFrame:
+    
+    def _predict_scores(self) -> torch.Tensor:
         self.model.eval()
         with torch.no_grad():
             user_emb, item_emb = self.model(self.adj_norm)
-            scores = torch.matmul(user_emb, item_emb.t()).cpu().numpy()
+            scores = torch.matmul(user_emb, item_emb.t())
+        return scores
+
+    def predict(self) -> pd.DataFrame:
+        scores = self._predict_scores()
         
         test_users = self.test_df['user_idx'].values
         test_items = self.test_df['item_idx'].values
         test_scores = scores[test_users, test_items]
 
         predictions = self.test_df.copy()
-        predictions['score'] = test_scores
+        predictions['prediction'] = test_scores
 
-        return predictions[['user_idx', 'item_idx', 'score']]
+        predictions['user'] = predictions['user_idx'].map(self.idx2user)
+        predictions['item'] = predictions['item_idx'].map(self.idx2item)
+
+        return predictions[['user', 'item', 'prediction', 'rating']]
 
 
-    def recommend_k(self) -> Dict[str, float]:
-        pass
+    def recommend_k(self, k:int=10) -> pd.DataFrame:
+        scores = self._predict_scores().cpu().numpy()
+
+        user_indices = np.repeat(np.arange(self.num_users), self.num_items)
+        item_indices = np.tile(np.arange(self.num_items), self.num_users)
+        all_scores = scores.flatten()
+
+        all_predictions = pd.DataFrame({
+            'user_idx': user_indices,
+            'item_idx': item_indices,
+            'prediction': all_scores
+        })
+
+        interacted = pd.concat([
+            self.train_df[self.train_df['label'] == 1][['user_idx', 'item_idx']],
+            self.test_df[self.test_df['label'] == 1][['user_idx', 'item_idx']]
+        ])
+        interacted_set = set(zip(interacted['user_idx'], interacted['item_idx']))
+
+        all_predictions = all_predictions[~all_predictions.apply(lambda row: (row['user_idx'], row['item_idx']) in interacted_set, axis=1)]
+
+        top_k_items = get_top_k_items(
+            dataframe=all_predictions.copy(),
+            col_user="user_idx",
+            col_rating="prediction",
+            k=k
+        )
+
+        top_k_items['user'] = top_k_items['user_idx'].map(self.idx2user)
+        top_k_items['item'] = top_k_items['item_idx'].map(self.idx2item)
+
+        return top_k_items[['user', 'item', 'prediction', 'rank']]
+
+
+
 
 
 def main():
@@ -398,6 +417,7 @@ def main():
         num_layers=5,
         learning_rate=0.01,
         epochs=50,
+        num_negatives=4,
         device='cpu'
     )
 
@@ -405,19 +425,12 @@ def main():
     model.train()
 
     predictions = model.predict()
+    print("\npredict:")
     print(predictions.head())
 
-    # # 为指定用户生成 Top-K 推荐
-    # user_id = '196'  # 示例用户 ID，确保该 ID 存在于数据集中
-    # top_k = 10
-    # recommendations = model.recommend_k(user_id, k=top_k)
-    # print(f"\n为用户 '{user_id}' 推荐的 Top-{top_k} 物品：{recommendations}")
-
-    # # 评估模型
-    # metrics = model.evaluate_metrics(k=top_k)
-    # print("\n评估指标：")
-    # for metric, value in metrics.items():
-    #     print(f"{metric}: {value:.4f}")
+    top_k_recommendations = model.recommend_k(k=10)
+    print("\ntop-k:")
+    print(top_k_recommendations.head())
 
 
 if __name__ == "__main__":
