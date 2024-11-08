@@ -9,8 +9,10 @@ from utils.metrics import get_top_k_items
 
 import pandas as pd
 import numpy as np
-from typing import Tuple, Dict, Union
+from typing import Optional, Set, Tuple, Dict, Union
 from typeguard import typechecked
+
+from sklearn.cluster import KMeans
 
 import torch
 import torch.nn as nn
@@ -18,13 +20,17 @@ from torch_geometric.data import Data
 import logging
 
 class ClusGCN(nn.Module):
-    def __init__(self, num_users: int, num_items: int, embedding_dim: int, num_layers: int, embedding_path = r'embeddings/'):
+    def __init__(self, num_users: int, num_items: int, embedding_dim: int, num_layers: int, user_degree: dict, device: str, embedding_path = r'embeddings/'):
         super(ClusGCN, self).__init__()
-        print(sys.path)
+        self.device = device
+
         self.num_users = num_users
         self.num_items = num_items
         self.embedding_dim = embedding_dim
         self.num_layers = num_layers
+
+        self.user_degree_ts = torch.tensor(list(user_degree.values()))
+        self.user_degree_ts = torch.min(torch.ones_like(self.user_degree_ts), self.user_degree_ts / torch.quantile(self.user_degree_ts.float(), 0.75))
 
         # Initialize embeddings
         self.user_embedding = nn.Embedding(num_users, self.embedding_dim)
@@ -45,8 +51,8 @@ class ClusGCN(nn.Module):
         self._init_embeddings()
 
     def _init_embeddings(self) -> None:
-        nn.init.normal_(self.user_embedding.weight, std=0.1)
-        nn.init.normal_(self.item_embedding.weight, std=0.1)
+        nn.init.xavier_uniform_(self.user_embedding.weight)
+        nn.init.xavier_uniform_(self.item_embedding.weight)
 
         genre_embedding = self.genre_cat_layer(self.genre_hot_embedding).detach().clone().requires_grad_()
         self.item_embedding.weight = torch.nn.Parameter(self.item_embedding.weight + genre_embedding)
@@ -55,7 +61,37 @@ class ClusGCN(nn.Module):
         occupation_embedding = self.occupation_cat_layer(self.occupation_hot_embedding).detach().clone().requires_grad_()
         self.user_embedding.weight = torch.nn.Parameter(self.user_embedding.weight + age_embedding + occupation_embedding)
 
+    def _clustering_fusion(self, user_embedding):
+        # Convert embeddings to numpy array for KMeans clustering
+        user_embedding_np = user_embedding.cpu().detach().numpy()
+
+        # Apply KMeans clustering
+        num_clusters = 10  # Set the number of clusters
+        kmeans = KMeans(n_clusters=num_clusters)
+        cluster_assignments = kmeans.fit_predict(user_embedding_np)
+
+        # Move cluster assignments back to torch tensor on GPU
+        cluster_assignments_tensor = torch.from_numpy(cluster_assignments).to(self.device)
+
+        # Compute the sum of embeddings for each cluster using matrix operations
+        cluster_sums = torch.zeros(num_clusters, user_embedding.size(1), device=self.device)
+        cluster_counts = torch.zeros(num_clusters, device=self.device)
+
+        # Calculate the sum of embeddings for each cluster using matrix operations
+        for i in range(user_embedding.size(0)):
+            cluster_id = cluster_assignments_tensor[i]
+            cluster_sums[cluster_id] += self.user_degree_ts[i] * user_embedding[i]
+            cluster_counts[cluster_id] += self.user_degree_ts[i]
+
+        # Compute the transformed embeddings
+        alphas = self.user_degree_ts.unsqueeze(1).to(self.device)
+        transformed_embeddings = alphas * user_embedding + (1-alphas)*cluster_sums[cluster_assignments_tensor] / cluster_counts[cluster_assignments_tensor].unsqueeze(1)
+
+        return transformed_embeddings.to(self.device)
+
     def forward(self, adj_norm) -> Tuple[torch.Tensor, torch.Tensor]:
+        self.user_embedding.weight = torch.nn.Parameter(self._clustering_fusion(self.user_embedding.weight).detach().clone().requires_grad_())
+        
         all_embeddings = torch.cat(
             [self.user_embedding.weight, 
              self.item_embedding.weight], dim=0
@@ -92,6 +128,7 @@ class ClusGCN(nn.Module):
     #     return user_embeddings, item_embeddings
 
 
+
 @typechecked
 class ClusGCNModel():
     def __init__(
@@ -102,12 +139,14 @@ class ClusGCNModel():
         learning_rate: float = 0.01,
         epochs: int = 10,
         batch_size: int = 1024,
+        num_negatives: int =4,
+        train_alpha: float = 1.0,
         device: str = 'auto'  # 'auto', 'cuda', 'mps', or 'cpu'
     ) -> None:
         super().__init__()
         
         logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - [%(levelname)s]: %(message)s")
-        self.logger = logging.getLogger("LGCN model")
+        self.logger = logging.getLogger("ClusGCN model")
 
         self.data_loader = DataLoader(size=size)
 
@@ -120,6 +159,8 @@ class ClusGCNModel():
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.batch_size = batch_size
+        self.num_negatives = num_negatives
+        self.train_alpha = train_alpha
         self.device = self._get_device(device)
 
         self.user2idx = {}
@@ -131,9 +172,10 @@ class ClusGCNModel():
 
         self.train_df = None
         self.test_df = None
-        self.test_pre = None
         self.graph = None
         self.adj_norm = None
+
+        self.test_pre = None
 
         self.model = None
         self.optimizer = None
@@ -172,7 +214,7 @@ class ClusGCNModel():
     def _load_ratings(self) -> pd.DataFrame:
         ratings = self.data_loader.load_ratings()
         self.logger.info("Data Loaded.")
-        print(ratings.head())
+        # print(ratings.head())
         return ratings
 
     def _load_items(self) -> pd.DataFrame:
@@ -186,15 +228,14 @@ class ClusGCNModel():
     def prepare_training_data(self) -> None:
         self.logger.info("Preparing data...")
         self.ratings = self._load_ratings()
-        self.items = self._load_items()
-        self.user_features = self._load_user_features()
         
         user_list = self.ratings['user'].unique().tolist()
         item_list = self.ratings['item'].unique().tolist()
 
         self.user2idx = {user: idx for idx, user in enumerate(user_list)}
-        self.item2idx = {item: idx for idx, item in enumerate(item_list)}
         self.idx2user = {idx: user for user, idx in self.user2idx.items()}
+
+        self.item2idx = {item: idx for idx, item in enumerate(item_list)}
         self.idx2item = {idx: item for item, idx in self.item2idx.items()}
 
         self.num_users = len(user_list)
@@ -203,21 +244,12 @@ class ClusGCNModel():
         self.ratings['user_idx'] = self.ratings['user'].map(self.user2idx)
         self.ratings['item_idx'] = self.ratings['item'].map(self.item2idx)
 
-        # print("\nuser item map：")
-        # print(self.user2idx)
-        # print(self.item2idx)
-
         # train_df, test_df = train_test_split(
         #     self.ratings,
         #     test_size=0.3,
         #     random_state=42,
         #     stratify=self.ratings['user_idx']
         # )
-
-        # print("\Train set:")
-        # print(train_df.head())
-        # print("\Test set:")
-        # print(test_df.head())
 
         # train test split, keep 1 useritem for every user
         train_list = []
@@ -237,22 +269,20 @@ class ClusGCNModel():
         test_df = pd.concat(test_list).reset_index(drop=True)
         self.test_pre = test_df.copy()
 
-        global_neg_set_train = set(zip(train_df['user_idx'], train_df['item_idx']))
-        train_neg_df = self._generate_negative_samples(train_df, num_negatives=4, global_neg_set=global_neg_set_train)
+        global_neg_set = set(zip(self.ratings['user_idx'], self.ratings['item_idx']))
 
-        global_neg_set_test = global_neg_set_train.union(set(zip(test_df['user_idx'], test_df['item_idx'])))
-        test_neg_df = self._generate_negative_samples(test_df, num_negatives=4, global_neg_set=global_neg_set_test)
+        train_neg_df = self._generate_negative_samples(train_df, global_neg_set=global_neg_set)
+        test_neg_df = self._generate_negative_samples(test_df, global_neg_set=global_neg_set)
 
-        
         # merge pos neg, label: pos 1 neg 0
         train_full_df = pd.concat([
-            train_df[['user_idx', 'item_idx']].assign(label=1),
-            train_neg_df[['user_idx', 'item_idx', 'label']]
+            train_df[['user_idx', 'item_idx', 'rating']].assign(label=1),
+            train_neg_df[['user_idx', 'item_idx', 'rating', 'label']]
         ], ignore_index=True)
 
         test_full_df = pd.concat([
-            test_df[['user_idx', 'item_idx']].assign(label=1),
-            test_neg_df[['user_idx', 'item_idx', 'label']]
+            test_df[['user_idx', 'item_idx', 'rating']].assign(label=1),
+            test_neg_df[['user_idx', 'item_idx', 'rating', 'label']]
         ], ignore_index=True)
 
         self.train_df = train_full_df
@@ -261,8 +291,8 @@ class ClusGCNModel():
         self._build_graph()
         self._init_model()
     
-    def _generate_negative_samples(self, df, num_negatives=1, global_neg_set=None):
-        self.logger.info("Generating negative samples...")
+    def _generate_negative_samples(self, df: pd.DataFrame, global_neg_set: Optional[Set[tuple]] = None) -> pd.DataFrame:
+        self.logger.info("Generating negative samples...") 
     
         if global_neg_set is None:
             global_neg_set = set(zip(df['user_idx'], df['item_idx']))
@@ -273,7 +303,7 @@ class ClusGCNModel():
         user_to_interacted_items = df.groupby('user_idx')['item_idx'].apply(set).to_dict()
         
         user_positive_counts = df['user_idx'].value_counts().to_dict()
-        user_neg_counts = {user: count * num_negatives for user, count in user_positive_counts.items()}
+        user_neg_counts = {user: count * self.num_negatives for user, count in user_positive_counts.items()}
         
         neg_samples = []
         
@@ -286,7 +316,7 @@ class ClusGCNModel():
             else:
                 sampled_items = np.random.choice(available_items, size=neg_count, replace=False)
             
-            neg_samples.extend([{'user_idx': user, 'item_idx': int(item), 'label': 0} for item in sampled_items])
+            neg_samples.extend([{'user_idx': user, 'item_idx': int(item), 'rating': 0, 'label': 0} for item in sampled_items])
         
         neg_df = pd.DataFrame(neg_samples)
 
@@ -306,19 +336,16 @@ class ClusGCNModel():
         user_indices = train_positive['user_idx'].values
         item_indices = train_positive['item_idx'].values + self.num_users 
 
-        # print(f'user_indices: {user_indices}, len(user_indices) = {len(user_indices)}')
-        # print(f'item_indices: {item_indices}, len(item_indices) = {len(item_indices)}')
-
         src = np.concatenate([user_indices, item_indices])
         dst = np.concatenate([item_indices, user_indices])
-        # print(f'src:{src}')
-        # print(f'dst:{dst}')
+        
         edge_index_np = np.stack([src, dst], axis=0).astype(np.int64)
         edge_index = torch.tensor(edge_index_np, dtype=torch.long)
-        #print(f'edge_index: {edge_index}')
+
         data = Data(edge_index=edge_index, num_nodes=self.num_users + self.num_items)
+
         data = data.to(self.device)
-        #print(f'data: {data}')
+
         # adj_norm = self.normalize_adj(data.edge_index, data.num_nodes)
         row, col = data.edge_index
         deg = torch.bincount(row, minlength=data.num_nodes).float()
@@ -329,7 +356,7 @@ class ClusGCNModel():
 
         adj_norm = torch.sparse_coo_tensor(data.edge_index, edge_weight, (data.num_nodes, data.num_nodes))
         self.adj_norm = adj_norm.coalesce().to(self.device)
-        print(f'adj_norm: {self.adj_norm}')
+        self.user_degree = {user_idx: self.adj_norm[user_idx]._nnz() for user_idx in range(self.num_users)}
 
     def _init_model(self):
         self.logger.info("initilizing model...")
@@ -337,7 +364,9 @@ class ClusGCNModel():
             num_users=self.num_users,
             num_items=self.num_items,
             embedding_dim=self.embedding_dim,
-            num_layers=self.num_layers
+            num_layers=self.num_layers,
+            user_degree = self.user_degree,
+            device = self.device
         ).to(self.device)
 
         # adam + l2
@@ -346,19 +375,18 @@ class ClusGCNModel():
     def train(self):
         self.model.train()
 
-        print("starts training")
-
         pos_df = self.train_df[self.train_df['label'] == 1]
         neg_df = self.train_df[self.train_df['label'] == 0]
 
         pos_user_ids = pos_df['user_idx'].values
         pos_item_ids = pos_df['item_idx'].values
+        pos_ratings = pos_df['rating'].values
+        
         neg_user_ids = neg_df['user_idx'].values
         neg_item_ids = neg_df['item_idx'].values
 
-        num_negatives = 4
         pos_len = len(pos_user_ids)
-        required_neg_samples = pos_len * num_negatives
+        required_neg_samples = pos_len * self.num_negatives
 
         # 检查负样本数量是否足够
         actual_neg_samples = len(neg_user_ids)
@@ -370,31 +398,43 @@ class ClusGCNModel():
         neg_item_ids = neg_item_ids[:required_neg_samples]
 
         # 重复正样本以匹配负样本数量
-        pos_user_ids = np.repeat(pos_user_ids, num_negatives)
-        pos_item_ids = np.repeat(pos_item_ids, num_negatives)
+        pos_user_ids_bpr = np.repeat(pos_user_ids, self.num_negatives)
+        pos_item_ids_bpr = np.repeat(pos_item_ids, self.num_negatives)
+        
+        pos_user_ids_bpr = torch.from_numpy(pos_user_ids_bpr).long().to(self.device)
+        pos_item_ids_bpr = torch.from_numpy(pos_item_ids_bpr).long().to(self.device)
+        neg_user_ids_bpr = torch.from_numpy(neg_user_ids).long().to(self.device)
+        neg_item_ids_bpr = torch.from_numpy(neg_item_ids).long().to(self.device)
+        
+        # For rating loss, use positive samples only
+        pos_user_ids_reg = torch.from_numpy(pos_user_ids).long().to(self.device)
+        pos_item_ids_reg = torch.from_numpy(pos_item_ids).long().to(self.device)
+        pos_ratings_reg = torch.from_numpy(pos_ratings).float().to(self.device)
 
-        pos_user_ids = torch.from_numpy(pos_user_ids).long().to(self.device)
-        pos_item_ids = torch.from_numpy(pos_item_ids).long().to(self.device)
-        neg_user_ids = torch.from_numpy(neg_user_ids).long().to(self.device)
-        neg_item_ids = torch.from_numpy(neg_item_ids).long().to(self.device)
-
-        print("starts loop")
         for epoch in range(1, self.epochs + 1):
             self.optimizer.zero_grad()
 
-            # forward prop
+            # forward
             user_emb, item_emb = self.model(self.adj_norm)
-
-            u_pos = user_emb[pos_user_ids]    # (N, embedding_dim)
-            i_pos = item_emb[pos_item_ids]    # (N, embedding_dim)
-            u_neg = user_emb[neg_user_ids]    # (N, embedding_dim)
-            i_neg = item_emb[neg_item_ids]    # (N, embedding_dim)
-
+        
+            # BPR Loss
+            u_pos = user_emb[pos_user_ids_bpr]    # (N, embedding_dim)
+            i_pos = item_emb[pos_item_ids_bpr]    # (N, embedding_dim)
+            u_neg = user_emb[neg_user_ids_bpr]    # (N, embedding_dim)
+            i_neg = item_emb[neg_item_ids_bpr]    # (N, embedding_dim)
+            
             pos_scores = torch.sum(u_pos * i_pos, dim=1)  # (N,)
             neg_scores = torch.sum(u_neg * i_neg, dim=1)  # (N,)
-
-            # BPR loss：-log(sigmoid(pos - neg))
-            loss = -torch.mean(torch.log(torch.sigmoid(pos_scores - neg_scores) + 1e-10))
+            
+            # BPR loss
+            bpr_loss = -torch.mean(torch.log(torch.sigmoid(pos_scores - neg_scores) + 1e-10))
+            
+            # MSE Loss for rating prediction
+            pred_ratings = torch.sum(user_emb[pos_user_ids_reg] * item_emb[pos_item_ids_reg], dim=1)  # (N,)
+            mse_loss = nn.functional.mse_loss(pred_ratings, pos_ratings_reg)
+            
+            # Combine losses
+            loss = bpr_loss + self.train_alpha * mse_loss
 
             loss.backward()
             self.optimizer.step()
@@ -408,8 +448,7 @@ class ClusGCNModel():
             user_emb, item_emb = self.model(self.adj_norm)
             scores = torch.matmul(user_emb, item_emb.t())
         return scores
-    
-    
+
     def predict(self) -> pd.DataFrame:
         scores = self._predict_scores()
         
@@ -465,13 +504,13 @@ class ClusGCNModel():
 
 
 def main():
-
-    model = ClusGCN(
+    model = ClusGCNModel(
         size="100k",
         embedding_dim=64,
         num_layers=5,
         learning_rate=0.01,
         epochs=50,
+        num_negatives=4,
         device='cpu'
     )
 
@@ -479,19 +518,12 @@ def main():
     model.train()
 
     predictions = model.predict()
+    print("\npredict:")
     print(predictions.head())
 
-    # # 为指定用户生成 Top-K 推荐
-    # user_id = '196'  # 示例用户 ID，确保该 ID 存在于数据集中
-    # top_k = 10
-    # recommendations = model.recommend_k(user_id, k=top_k)
-    # print(f"\n为用户 '{user_id}' 推荐的 Top-{top_k} 物品：{recommendations}")
-
-    # # 评估模型
-    # metrics = model.evaluate_metrics(k=top_k)
-    # print("\n评估指标：")
-    # for metric, value in metrics.items():
-    #     print(f"{metric}: {value:.4f}")
+    top_k_recommendations = model.recommend_k(k=10)
+    print("\ntop-k:")
+    print(top_k_recommendations.head())
 
 
 if __name__ == "__main__":
