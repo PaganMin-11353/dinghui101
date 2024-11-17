@@ -551,3 +551,18 @@ class GeneralGNN(nn.Module):
         final_support_encode_item_task = torch.mean(support_encoded, dim=1)  # [batch_size, embedding_size]
 
         return final_support_encode_item_task
+
+
+    def glorot(shape, name=None):
+        """
+        Glorot & Bengio (AISTATS 2010) initialization for weight matrices.
+        
+        Args:
+            shape (tuple): Shape of the weight matrix (e.g., (input_dim, output_dim)).
+            name (str, optional): Name for the weight variable (not used in PyTorch but kept for compatibility).
+
+        Returns:
+            torch.Tensor: Initialized weight matrix.
+        """
+        init_range = np.sqrt(6.0 / (shape[0] + shape[1]))
+        return torch.empty(shape).uniform_(-init_range, init_range)
