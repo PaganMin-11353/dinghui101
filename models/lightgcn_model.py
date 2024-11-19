@@ -110,7 +110,6 @@ class LightGCNModel():
         self.optimizer = None
         self.criterion = nn.BCEWithLogitsLoss()
 
-
     def _get_device(self, device_str: str) -> torch.device:
         if device_str == 'auto':
             if torch.cuda.is_available():
@@ -145,14 +144,6 @@ class LightGCNModel():
         self.logger.info("Data Loaded.")
         # print(ratings.head())
         return ratings
-
-    def _load_items(self) -> pd.DataFrame:
-        items = self.data_loader.load_items(process_title=True, process_year=True, process_genres=True, genres_as_binary=True)
-        return items
-
-    def _load_user_features(self) -> pd.DataFrame:
-        user_features = self.data_loader.load_user_features(convert_age_to_range=True,convert_occupation_to_code=False)
-        return user_features
 
     def prepare_training_data(self) -> None:
         self.logger.info("Preparing data...")
