@@ -3,8 +3,8 @@ from models.svd_model import SVDModel
 from models.lightgcn_model import LightGCNModel
 from models.recommender import RecommenderModel
 
-def svd_model_train_and_evaluate(size):
-    svd_model = SVDModel(size, n_factors=200, n_epochs=30)
+def svd_model_train_and_evaluate(train_set, test_set):
+    svd_model = SVDModel(train_set=train_set, test_set=test_set, n_factors=200, n_epochs=30)
     svd_model.prepare_training_data()
     svd_model.train()
     predictions = svd_model.predict()
@@ -16,9 +16,10 @@ def svd_model_train_and_evaluate(size):
 
     return ratings, rankings
 
-def lgcn_model_train_and_evaluate(size):
+def lgcn_model_train_and_evaluate(train_set, test_set):
     lgcn_model = LightGCNModel(
-        size=size,
+        train_set=train_set,
+        test_set=test_set,
         num_layers=3,
         num_negatives=4,
         embedding_dim=64,
@@ -27,6 +28,7 @@ def lgcn_model_train_and_evaluate(size):
         batch_size=1024,
         device='cpu'
     )
+
     lgcn_model.prepare_training_data()
     lgcn_model.train()
     predictions = lgcn_model.predict()

@@ -2,11 +2,8 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# from .base_model import BaseModel
-from utils.dataloader import DataLoader
-from utils.metrics import get_top_k_items
-# from sklearn.model_selection import train_test_split
 
+from utils.metrics import get_top_k_items
 import pandas as pd
 import numpy as np
 from typing import Optional, Set, Tuple, Dict, Union
@@ -62,7 +59,8 @@ class LightGCN(nn.Module):
 class LightGCNModel():
     def __init__(
         self,
-        size: str,  # "100k" or "1m"
+        train_set:pd.DataFrame,
+        test_set:pd.DataFrame,
         num_layers: int = 3,
         embedding_dim: int = 64,
         learning_rate: float = 0.01,
@@ -77,12 +75,11 @@ class LightGCNModel():
         logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - [%(levelname)s]: %(message)s")
         self.logger = logging.getLogger("LGCN model")
 
-        self.data_loader = DataLoader(size=size)
+        self.train_set = train_set
+        self.test_set = test_set
 
-        if size not in self.data_loader.DATA_FORMATS:
-            raise ValueError(f"Invalid size: {size}. Choose from {list(self.data_loader.DATA_FORMATS.keys())}.")
+        print(" self.train_set size ", len( self.train_set))
 
-        self.size = size
         self.num_layers = num_layers
         self.embedding_dim = embedding_dim
         self.learning_rate = learning_rate
@@ -109,7 +106,6 @@ class LightGCNModel():
         self.model = None
         self.optimizer = None
         self.criterion = nn.BCEWithLogitsLoss()
-
 
     def _get_device(self, device_str: str) -> torch.device:
         if device_str == 'auto':
@@ -140,27 +136,13 @@ class LightGCNModel():
         else:
             raise ValueError("Invalid device option: 'auto', 'cuda', 'mps', 'cpu'.")
 
-    def _load_ratings(self) -> pd.DataFrame:
-        ratings = self.data_loader.load_ratings()
-        self.logger.info("Data Loaded.")
-        # print(ratings.head())
-        return ratings
-
-    def _load_items(self) -> pd.DataFrame:
-        items = self.data_loader.load_items(process_title=True, process_year=True, process_genres=True, genres_as_binary=True)
-        return items
-
-    def _load_user_features(self) -> pd.DataFrame:
-        user_features = self.data_loader.load_user_features(convert_age_to_range=True,convert_occupation_to_code=False)
-        return user_features
-
     def prepare_training_data(self) -> None:
         self.logger.info("Preparing data...")
-        self.ratings = self._load_ratings()
-        
+        self.ratings = pd.concat([self.train_set, self.test_set], axis=0, ignore_index=True)
+
         user_list = self.ratings['user'].unique().tolist()
         item_list = self.ratings['item'].unique().tolist()
-
+    
         self.user2idx = {user: idx for idx, user in enumerate(user_list)}
         self.idx2user = {idx: user for user, idx in self.user2idx.items()}
 
@@ -173,31 +155,10 @@ class LightGCNModel():
         self.ratings['user_idx'] = self.ratings['user'].map(self.user2idx)
         self.ratings['item_idx'] = self.ratings['item'].map(self.item2idx)
 
-        # train_df, test_df = train_test_split(
-        #     self.ratings,
-        #     test_size=0.3,
-        #     random_state=42,
-        #     stratify=self.ratings['user_idx']
-        # )
+        train_df = self.ratings[:len(self.train_set)]
+        test_df = self.ratings[len(self.train_set):]
 
-        # train test split, keep 1 useritem for every user
-        train_list = []
-        test_list = []
-
-        grouped = self.ratings.groupby('user_idx')
-        for user, group in grouped:
-            if len(group) < 2:
-                train_list.append(group)
-            else:
-                test_sample = group.sample(n=1, random_state=42)
-                train_sample = group.drop(test_sample.index)
-                train_list.append(train_sample)
-                test_list.append(test_sample)
-
-        train_df = pd.concat(train_list).reset_index(drop=True)
-        test_df = pd.concat(test_list).reset_index(drop=True)
         self.test_pre = test_df.copy()
-
         global_neg_set = set(zip(self.ratings['user_idx'], self.ratings['item_idx']))
 
         train_neg_df = self._generate_negative_samples(train_df, global_neg_set=global_neg_set)
@@ -249,7 +210,7 @@ class LightGCNModel():
         
         neg_df = pd.DataFrame(neg_samples)
 
-        # 确认每个用户生成了正确数量的负样本
+        # Make sure that the correct number of negative samples are generated for each user
         user_neg_counts_generated = neg_df['user_idx'].value_counts().to_dict()
         for user, expected_count in user_neg_counts.items():
             actual_count = user_neg_counts_generated.get(user, 0)
@@ -314,16 +275,16 @@ class LightGCNModel():
         pos_len = len(pos_user_ids)
         required_neg_samples = pos_len * self.num_negatives
 
-        # 检查负样本数量是否足够
+       # Check if the number of negative samples is sufficient
         actual_neg_samples = len(neg_user_ids)
         if actual_neg_samples < required_neg_samples:
             raise ValueError(f"Not enough negative samples: required {required_neg_samples}, but got {actual_neg_samples}")
 
-        # 截取所需数量的负样本
+        # Check if the number of negative samples is sufficient
         neg_user_ids = neg_user_ids[:required_neg_samples]
         neg_item_ids = neg_item_ids[:required_neg_samples]
 
-        # 重复正样本以匹配负样本数量
+        # Repeat positive samples to match the number of negative samples
         pos_user_ids_bpr = np.repeat(pos_user_ids, self.num_negatives)
         pos_item_ids_bpr = np.repeat(pos_item_ids, self.num_negatives)
         
@@ -428,31 +389,29 @@ class LightGCNModel():
         return top_k_items[['user', 'item', 'prediction']]
 
 
+# def main():
+#     model = LightGCNModel(
+#         train_set=[],
+#         test_set=[],
+#         embedding_dim=64,
+#         num_layers=5,
+#         learning_rate=0.01,
+#         epochs=50,
+#         num_negatives=4,
+#         device='cpu'
+#     )
+
+#     model.prepare_training_data()
+#     model.train()
+
+#     predictions = model.predict()
+#     print("\npredict:")
+#     print(predictions.head())
+
+#     top_k_recommendations = model.recommend_k(k=10)
+#     print("\ntop-k:")
+#     print(top_k_recommendations.head())
 
 
-
-def main():
-    model = LightGCNModel(
-        size="100k",
-        embedding_dim=64,
-        num_layers=5,
-        learning_rate=0.01,
-        epochs=50,
-        num_negatives=4,
-        device='cpu'
-    )
-
-    model.prepare_training_data()
-    model.train()
-
-    predictions = model.predict()
-    print("\npredict:")
-    print(predictions.head())
-
-    top_k_recommendations = model.recommend_k(k=10)
-    print("\ntop-k:")
-    print(top_k_recommendations.head())
-
-
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
