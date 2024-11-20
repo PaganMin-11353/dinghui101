@@ -7,11 +7,28 @@ def train_test_split(data, ratio=0.75, seed=42):
     test_list = []
 
     grouped = data.groupby('user')
-    for user, group in grouped:
+    users = list(grouped.groups.keys())
+
+    np.random.seed(seed)
+    np.random.shuffle(users)
+
+    cold_start_number = int(len(users) * 0.2)
+    for user in users[:cold_start_number]:
+        group = grouped.get_group(user)
         if len(group) < 2:
             train_list.append(group)
         else:
-            test_sample = group.sample(n=int((1-ratio) * len(group)), random_state=42)
+            test_sample = group.sample(n=int(ratio * len(group)), random_state=seed)
+            train_sample = group.drop(test_sample.index)
+            train_list.append(train_sample)
+            test_list.append(test_sample)
+
+    for user in users[cold_start_number:]:
+        group = grouped.get_group(user)
+        if len(group) < 2:
+            train_list.append(group)
+        else:
+            test_sample = group.sample(n=int((1 - ratio) * len(group)), random_state=seed)
             train_sample = group.drop(test_sample.index)
             train_list.append(train_sample)
             test_list.append(test_sample)

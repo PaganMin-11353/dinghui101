@@ -78,8 +78,6 @@ class LightGCNModel():
         self.train_set = train_set
         self.test_set = test_set
 
-        print(" self.train_set size ", len( self.train_set))
-
         self.num_layers = num_layers
         self.embedding_dim = embedding_dim
         self.learning_rate = learning_rate
