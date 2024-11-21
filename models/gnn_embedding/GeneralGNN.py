@@ -58,8 +58,8 @@ class GeneralGNN(nn.Module):
         self.optimizer = torch.optim.Adagrad(self.parameters(), lr=self.learning_rate)
 
         # index and id mappings
-        init_user_embedding_df = pd.from_csv(init_user_embedding_path)
-        init_item_embedding_df = pd.from_csv(init_item_embedding_path)
+        init_user_embedding_df = pd.read_csv(init_user_embedding_path)
+        init_item_embedding_df = pd.read_csv(init_item_embedding_path)
 
         user_embeddings = torch.tensor(init_user_embedding_df['embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
         item_embeddings = torch.tensor(init_item_embedding_df['embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
@@ -434,7 +434,7 @@ class GeneralGNN(nn.Module):
         return final_support_encode_item_task
 
 
-    def glorot(shape, name=None):
+    def glorot(self, shape, name=None):
         """
         Glorot & Bengio (AISTATS 2010) initialization for weight matrices.
         

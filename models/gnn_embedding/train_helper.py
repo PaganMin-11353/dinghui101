@@ -49,7 +49,7 @@ def train_first_order_task(model, train_loader, valid_loader, epochs, device, ta
         avg_train_loss = train_loss / len(train_loader)
         print(f"Epoch {epoch + 1}/{epochs} - First-Order {task} Task: Train Loss = {avg_train_loss:.4f}")
 
-        validate_task(model, valid_loader, loss_fn, device, task, "First-Order")
+        # validate_task(model, valid_loader, loss_fn, device, task, "First-Order")
 
 
 def train_second_order_task(model, train_loader, valid_loader, epochs, device, task="user"):
@@ -86,7 +86,7 @@ def train_second_order_task(model, train_loader, valid_loader, epochs, device, t
         avg_train_loss = train_loss / len(train_loader)
         print(f"Epoch {epoch + 1}/{epochs} - Second-Order {task} Task: Train Loss = {avg_train_loss:.4f}")
 
-        validate_task(model, valid_loader, loss_fn, device, task, "Second-Order")
+        # validate_task(model, valid_loader, loss_fn, device, task, "Second-Order")
 
 
 def train_third_order_task(model, train_loader, valid_loader, epochs, device, task="user"):
@@ -124,7 +124,7 @@ def train_third_order_task(model, train_loader, valid_loader, epochs, device, ta
         avg_train_loss = train_loss / len(train_loader)
         print(f"Epoch {epoch + 1}/{epochs} - Third-Order {task} Task: Train Loss = {avg_train_loss:.4f}")
 
-        validate_task(model, valid_loader, loss_fn, device, task, "Third-Order")
+        # validate_task(model, valid_loader, loss_fn, device, task, "Third-Order")
 
 
 def validate_task(model, valid_loader, loss_fn, device, task, order):
