@@ -65,6 +65,15 @@ class GeneralGNN(nn.Module):
             nn.Linear(self.embedding_size, 1),
             nn.Sigmoid()
         )
+    
+
+    def reload_embedding(self, new_user_embedding_path="path.pt", new_item_embedding_path="path.pt"):
+        new_user_embedding = torch.load(new_user_embedding_path).float()
+        new_item_embedding = torch.load(new_item_embedding_path).float()
+
+        self.user_embeddings.weight.data = new_user_embedding
+        self.item_embeddings.weight.data = new_item_embedding
+        
 
     def forward(self, target_ids, support_1st, support_2nd=None, support_3rd=None, task="user", aggregation="GAT"):
         """
@@ -81,10 +90,12 @@ class GeneralGNN(nn.Module):
         Returns:
             Tensor: Predicted embeddings for the target users/items. Shape: [batch_size, embedding_size].
         """
+        self.userid2idx = {}
         # Get embeddings for first-order neighbors
         if task == "user":
             # First-order neighbors are items for user tasks
-            first_order_embeddings = self.item_embeddings(support_1st)  # Shape: [batch_size, num_neighbors_1st, embedding_size]
+            support_1st_idx = [self.userid2idx[userid] for userid in support_1st]
+            first_order_embeddings = self.item_embeddings(support_1st_idx)  # Shape: [batch_size, num_neighbors_1st, embedding_size]
         elif task == "item":
             # First-order neighbors are users for item tasks
             first_order_embeddings = self.user_embeddings(support_1st)  # Shape: [batch_size, num_neighbors_1st, embedding_size]
