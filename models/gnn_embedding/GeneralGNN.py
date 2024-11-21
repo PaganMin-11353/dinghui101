@@ -2,23 +2,27 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from encoder import Encoder
 
 class GeneralGNN(nn.Module):
     def __init__(self, name, settings):
-        super(GeneralGNN, self).__init__()
+        super().__init__()
         self.name = name
 
         # Hyperparameters and settings
+        assert hasattr(settings, "embedding_size"), "settings must have 'embedding_size'"
+        assert hasattr(settings, "learning_rate"), "settings must have 'learning_rate'"
+        assert hasattr(settings, "num_items"), "settings must have 'num_items'"
+        assert hasattr(settings, "num_users"), "settings must have 'num_users'"
         self.embedding_size = settings.embedding_size
         self.learning_rate = settings.learning_rate
-        self.learning_rate_downstream = settings.learning_rate_downstream
         self.num_items = settings.num_items
         self.num_users = settings.num_users
-        self.k = settings.k
-        self.dropout = settings.dropout
-        self.batch_size = settings.batch_size
-        self.decay = settings.decay
+        
+        # self.learning_rate_downstream = settings.learning_rate_downstream
+        # self.k = settings.k
+        # self.dropout = settings.dropout
+        # self.batch_size = settings.batch_size
+        # self.decay = settings.decay
 
         # Transformer encoder structure
         self.dropout_rate = settings.dropout_rate
@@ -59,13 +63,12 @@ class GeneralGNN(nn.Module):
         # Optimizer (you may need separate optimizers for different components if required)
         self.optimizer = torch.optim.Adagrad(self.parameters(), lr=self.learning_rate)
 
-        # Pretrained embeddings (optional)
-        self.original_user_ebd = torch.tensor(np.load(settings.pre_train_user_ebd_path), dtype=torch.float32)
-        self.original_item_ebd = torch.tensor(np.load(settings.pre_train_item_ebd_path), dtype=torch.float32)
-        padding_ebd = torch.zeros((1, self.embedding_size), dtype=torch.float32)
-        self.original_user_ebd = torch.cat([self.original_user_ebd, padding_ebd], dim=0)
-        self.original_item_ebd = torch.cat([self.original_item_ebd, padding_ebd], dim=0)
-
+        # # Pretrained embeddings (optional)
+        # self.original_user_ebd = torch.tensor(np.load(settings.pre_train_user_ebd_path), dtype=torch.float32)
+        # self.original_item_ebd = torch.tensor(np.load(settings.pre_train_item_ebd_path), dtype=torch.float32)
+        # padding_ebd = torch.zeros((1, self.embedding_size), dtype=torch.float32)
+        # self.original_user_ebd = torch.cat([self.original_user_ebd, padding_ebd], dim=0)
+        # self.original_item_ebd = torch.cat([self.original_item_ebd, padding_ebd], dim=0)
 
     def create_agent_network(self, state_size):
         """
@@ -152,8 +155,6 @@ class GeneralGNN(nn.Module):
 
         return refined_embedding
 
-
-
     def _1st_user_task(self, support_item, target_user, training_phase):
         """
         First-order user task in PyTorch.
@@ -179,9 +180,6 @@ class GeneralGNN(nn.Module):
         loss_user_task = -torch.mean(cosine_similarity)
         
         return final_support_encode_user_task, cosine_similarity, loss_user_task
-
-
-
 
     def _1st_item_task(self):
         """
@@ -307,48 +305,112 @@ class GeneralGNN(nn.Module):
             return predict_u_3rd, cosine_similarity, loss_3rd_user 
 
 
-    def _3rd_item_task(self, name, support_user_3rd, support_item_2nd, support_user_1st):
+    def _3rd_item_task(self, name, support_user_3rd, support_item_2nd_, support_user_1st_):
         """
-        Second-order item task in PyTorch.
-        Aggregates second-order neighbors (items and users) to compute item embeddings.
+        Third-order item task in PyTorch.
+        Aggregates third-order neighbors (users and items) to compute item embeddings.
         """
         if name == 'GraphSAGE':
             # Initialize weights for transformations
-            w_0i = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
-            w_1i = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
-            w_2i = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
+            w_0u = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
+            w_1u = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
+            w_2u = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
 
-            # Third-order embeddings
-            support_ori_ebd_3rd = self.item_embeddings(support_user_3rd)
-            support_encode_3rd = torch.mean(self.encoder(support_ori_ebd_3rd), dim=1)  # [batch_size, embedding_size]
-            ori_3rd_ebd  = torch.mean(support_ori_ebd_3rd, dim=1) # [batch_size, embedding_size
+            # Lookup embeddings for third-order neighbors (users)
+            support_ori_ebd_3rd = self.user_embeddings(support_user_3rd)  # [batch_size, n3, embedding_size]
+            ori_3rd_ebd = torch.mean(support_ori_ebd_3rd, dim=1)  # [batch_size, embedding_size]
+            support_encode_3rd = self.encoder(support_ori_ebd_3rd)  # Apply encoder [batch_size, n3, embedding_size] -> [batch_size, embedding_size]
 
-            # Second-order embeddings
-            support_ori_ebd_2nd = self.user_embeddings(support_item_2nd)
-            support_encode_2nd = torch.mean(self.encoder(support_ori_ebd_2nd), dim=1)  # [batch_size, embedding_size]
+            # Lookup embeddings for second-order neighbors (items)
+            support_ori_ebd_2nd = self.item_embeddings(support_item_2nd_)  # [batch_size, n2, embedding_size]
             ori_2nd_ebd = torch.mean(support_ori_ebd_2nd, dim=1)  # [batch_size, embedding_size]
+            support_encode_2nd = self.encoder(support_ori_ebd_2nd)  # Apply encoder [batch_size, n2, embedding_size] -> [batch_size, embedding_size]
 
-            # First-order embeddings
-            support_ori_ebd_1st = self.item_embeddings(support_user_1st)
+            # Lookup embeddings for first-order neighbors (users)
+            support_ori_ebd_1st = self.user_embeddings(support_user_1st_)  # [batch_size, n1, embedding_size]
             ori_1st_ebd = torch.mean(support_ori_ebd_1st, dim=1)  # [batch_size, embedding_size]
 
-            # Aggregate third-order to second-order
+            # Combine embeddings for third-order aggregation
             aggregate_3rd = torch.cat([support_encode_3rd, ori_3rd_ebd, ori_2nd_ebd], dim=1)  # [batch_size, 3 * embedding_size]
-            refined_second_neigh_ebd = torch.matmul(aggregate_3rd, w_2i)  # [batch_size, embedding_size]
+            refined_second_neigh_ebd = torch.matmul(aggregate_3rd, w_2u)  # [batch_size, embedding_size]
 
             # Aggregate second-order to first-order
             aggregate_2nd = torch.cat([refined_second_neigh_ebd, support_encode_2nd, ori_1st_ebd], dim=1)  # [batch_size, 3 * embedding_size]
-            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, w_1i)  # [batch_size, embedding_size]
-            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, w_0i)  # [batch_size, embedding_size]
+            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, w_1u)  # [batch_size, embedding_size]
+            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, w_0u)  # [batch_size, embedding_size]
 
-            # Final prediction for third-order user task
-            predict_u_3rd = refined_target_ebd
-            cosine_similarity = F.cosine_similarity(predict_u_3rd, self.target_item, dim=1)
+            # Final prediction for third-order item task
+            predict_i_3rd = refined_target_ebd
+            cosine_similarity = F.cosine_similarity(predict_i_3rd, self.target_item, dim=1)
             loss_3rd_item = -torch.mean(cosine_similarity)
 
-            return predict_u_3rd, cosine_similarity, loss_3rd_item 
+            return predict_i_3rd, cosine_similarity, loss_3rd_item
 
             
+class Encoder(nn.Module):
+    def __init__(self, embedding_size, num_blocks, num_heads, d_ff, dropout_rate):
+        """
+        Encoder module for multi-head attention and feedforward transformations.
+
+        Args:
+            embedding_size (int): Size of embeddings.
+            num_blocks (int): Number of attention blocks.
+            num_heads (int): Number of attention heads.
+            d_ff (int): Hidden layer size in feedforward network.
+            dropout_rate (float): Dropout rate.
+        """
+        super().__init__()
+        self.embedding_size = embedding_size
+        self.num_blocks = num_blocks
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.dropout_rate = dropout_rate
+
+        # Define multi-head attention and feedforward layers for each block
+        self.attention_blocks = nn.ModuleList([
+            nn.MultiheadAttention(embed_dim=embedding_size, num_heads=num_heads, dropout=dropout_rate)
+            for _ in range(num_blocks)
+        ])
+        self.feedforward_blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(embedding_size, d_ff),
+                nn.ReLU(),
+                nn.Linear(d_ff, embedding_size),
+                nn.Dropout(dropout_rate)
+            )
+            for _ in range(num_blocks)
+        ])
+        self.layer_norms_attention = nn.ModuleList([nn.LayerNorm(embedding_size) for _ in range(num_blocks)])
+        self.layer_norms_ff = nn.ModuleList([nn.LayerNorm(embedding_size) for _ in range(num_blocks)])
+
+    def forward(self, input):
+        """
+        Forward pass for the encoder.
+
+        Args:
+            input (Tensor): Input tensor of shape [batch_size, num_neighbors, embedding_size].
+
+        Returns:
+            enc (Tensor): Output tensor of shape [batch_size, num_neighbors, embedding_size].
+        """
+        # Scale the input embeddings
+        enc = input * (self.embedding_size ** 0.5)  # [b, n, e]
+
+        # Process through each block
+        for i in range(self.num_blocks):
+            # Multi-head self-attention
+            enc_transposed = enc.permute(1, 0, 2)  # Convert to [n, b, e] for PyTorch MultiheadAttention
+            attn_output, _ = self.attention_blocks[i](enc_transposed, enc_transposed, enc_transposed)
+            attn_output = attn_output.permute(1, 0, 2)  # Convert back to [b, n, e]
+            # Add and normalize
+            enc = self.layer_norms_attention[i](enc + attn_output)
+
+            # Feedforward
+            ff_output = self.feedforward_blocks[i](enc)
+            # Add and normalize
+            enc = self.layer_norms_ff[i](enc + ff_output)
+
+        return enc  # [b, n, e]
 
 
 
