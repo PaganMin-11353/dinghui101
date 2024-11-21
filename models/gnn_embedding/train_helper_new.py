@@ -13,7 +13,12 @@ def train_first_order_task(model, train_data, epochs, device, task="user"):
     else:
         target_ids_train = train_data["itemid"].tolist()
     support_1st_train = train_data["1st_order"].tolist()
-    oracle_embeddings_train = torch.tensor(train_data['oracle_embedding'].tolist(), dtype=torch.float32)
+
+    temp_embedding_list = train_data['oracle_embedding'].tolist()
+    if type(temp_embedding_list[0]) == str:
+        oracle_embeddings_train = torch.tensor([ast.literal_eval(s) for s in temp_embedding_list], dtype=torch.float32)
+    else:
+        oracle_embeddings_train = torch.tensor(temp_embedding_list, dtype=torch.float32)
 
     # target_ids_train = target_ids_train.to(device)
     # support_1st_train = support_1st_train.to(device)
@@ -26,12 +31,15 @@ def train_first_order_task(model, train_data, epochs, device, task="user"):
         model.train()
 
         # 前向传播
+        all_predictions = torch.empty(0,oracle_embeddings_train.shape[1])
         for i in range(0, len(target_ids_train)):
             predicted_embeddings = model(target_ids_train[i], support_1st_train[i], None, None, task=task)
+            all_predictions = torch.cat((all_predictions, predicted_embeddings), dim = 0)
 
         # 计算损失
-        target = torch.ones(predicted_embeddings.size(0), device=device)
-        loss = loss_fn(predicted_embeddings, oracle_embeddings_train, target)
+        target = torch.ones(all_predictions.size(0), device=device)
+        assert all_predictions.size(0) == oracle_embeddings_train.size(0)
+        loss = loss_fn(all_predictions, oracle_embeddings_train, target)
 
         # 反向传播和优化
         optimizer.zero_grad()
@@ -65,8 +73,12 @@ def train_second_order_task(model, train_data, epochs, device, task="user"):
         target_ids_train = train_data["itemid"].tolist()
     support_1st_train = train_data["1st_order"].tolist()
     support_2nd_train = train_data["2nd_order"].tolist()
-    oracle_embeddings_train = torch.tensor(train_data['oracle_embedding'].tolist(), dtype=torch.float32)
-    # target_ids_valid, support_1st_valid, support_2nd_valid, _, oracle_embeddings_valid = valid_data
+
+    temp_embedding_list = train_data['oracle_embedding'].tolist()
+    if type(temp_embedding_list[0]) == str:
+        oracle_embeddings_train = torch.tensor([ast.literal_eval(s) for s in temp_embedding_list], dtype=torch.float32)
+    else:
+        oracle_embeddings_train = torch.tensor(temp_embedding_list, dtype=torch.float32)    # target_ids_valid, support_1st_valid, support_2nd_valid, _, oracle_embeddings_valid = valid_data
 
     # target_ids_train = target_ids_train.to(device)
     # support_1st_train = support_1st_train.to(device)
@@ -78,12 +90,16 @@ def train_second_order_task(model, train_data, epochs, device, task="user"):
         model.train()
 
         # 前向传播
+        all_predictions = torch.empty(0,oracle_embeddings_train.shape[1])
         for i in range(0, len(target_ids_train)):
             predicted_embeddings = model(target_ids_train[i], support_1st_train[i], support_2nd_train[i], None, task=task)
+            all_predictions = torch.cat((all_predictions, predicted_embeddings), dim = 0)
 
+        #print(predicted_embeddings.size(), oracle_embeddings_train.size())
         # 计算损失
-        target = torch.ones(predicted_embeddings.size(0), device=device)
-        loss = loss_fn(predicted_embeddings, oracle_embeddings_train, target)
+        target = torch.ones(all_predictions.size(0), device=device)
+        assert all_predictions.size(0) == oracle_embeddings_train.size(0)
+        loss = loss_fn(all_predictions, oracle_embeddings_train, target)
 
         # 反向传播和优化
         optimizer.zero_grad()
@@ -107,7 +123,13 @@ def train_third_order_task(model, train_data, epochs, device, task="user"):
     support_1st_train = train_data["1st_order"].tolist()
     support_2nd_train = train_data["2nd_order"].tolist()
     support_3rd_train = train_data["3rd_order"].tolist()
-    oracle_embeddings_train = torch.tensor(train_data['oracle_embedding'].tolist(), dtype=torch.float32)
+
+    temp_embedding_list = train_data['oracle_embedding'].tolist()
+    if type(temp_embedding_list[0]) == str:
+        oracle_embeddings_train = torch.tensor([ast.literal_eval(s) for s in temp_embedding_list], dtype=torch.float32)
+    else:
+        oracle_embeddings_train = torch.tensor(temp_embedding_list, dtype=torch.float32)
+
     # target_ids_valid, support_1st_valid, support_2nd_valid, support_3rd_valid, oracle_embeddings_valid = valid_data
 
     # target_ids_train = target_ids_train.to(device)
@@ -120,12 +142,15 @@ def train_third_order_task(model, train_data, epochs, device, task="user"):
         model.train()
 
         # 前向传播
+        all_predictions = torch.empty(0,oracle_embeddings_train.shape[1])
         for i in range(0, len(target_ids_train)):
             predicted_embeddings = model(target_ids_train[i], support_1st_train[i], support_2nd_train[i], support_3rd_train[i], task=task)
+            all_predictions = torch.cat((all_predictions, predicted_embeddings), dim = 0)
 
         # 计算损失
-        target = torch.ones(predicted_embeddings.size(0), device=device)
-        loss = loss_fn(predicted_embeddings, oracle_embeddings_train, target)
+        target = torch.ones(all_predictions.size(0), device=device)
+        assert all_predictions.size(0) == oracle_embeddings_train.size(0)
+        loss = loss_fn(all_predictions, oracle_embeddings_train, target)
 
         # 反向传播和优化
         optimizer.zero_grad()

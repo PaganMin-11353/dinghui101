@@ -46,9 +46,12 @@ class GeneralGNN(nn.Module):
         )
 
         # Trainable weight matrices for second and third-order aggregation
-        self.first_order_weight = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
-        self.second_order_weight = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
-        self.third_order_weight = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
+        self.first_order_refine_weight = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
+        self.second_order_refine_weight = nn.Parameter(self.glorot([2 * self.embedding_size, self.embedding_size]))
+        self.third_order_refine_weight = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
+        self.first_order_sage_weight = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
+        self.second_order_sage_weight = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
+        self.third_order_sage_weight = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
 
         # Parameters for agent networks
         self.second_order_agent = self.create_agent_network(self.embedding_size)
@@ -125,7 +128,7 @@ class GeneralGNN(nn.Module):
         elif task == "item":
             # First-order neighbors are users for item tasks
             support_1st_idx = [self.user2idx[userid] for userid in support_1st]
-            first_order_embeddings = self.user_embeddings(support_1st_idx)  # Shape: [batch_size, num_neighbors_1st, embedding_size]
+            first_order_embeddings = self.user_embeddings(torch.Tensor(support_1st_idx).type(torch.long))  # Shape: [batch_size, num_neighbors_1st, embedding_size]
         else:
             raise ValueError("Task must be 'user' or 'item'")
 
@@ -135,8 +138,8 @@ class GeneralGNN(nn.Module):
         # print(self.aggregate_graphsage(first_order_embeddings).unsqueeze(dim=0).size()) #64
         # print(self.aggregate_graphsage(first_order_embeddings).unsqueeze(dim=0))
 
-        first_order_agg = torch.matmul(self.aggregate_graphsage(first_order_embeddings).unsqueeze(dim=0), self.first_order_weight)
-        refine_weight = self.first_order_weight
+        first_order_agg = torch.matmul(self.aggregate_graphsage(first_order_embeddings).unsqueeze(dim=0), self.first_order_sage_weight)
+        refine_weight = self.first_order_refine_weight
 
         # Handle second-order neighbors
         if support_2nd is not None:
@@ -149,11 +152,11 @@ class GeneralGNN(nn.Module):
                 support_2nd_idx = [self.item2idx[itemid] for itemid in support_2nd]
                 second_order_embeddings = self.item_embeddings(torch.Tensor(support_2nd_idx).type(torch.long))  # Shape: [batch_size, num_neighbors_2nd, embedding_size]
             
-            print(second_order_embeddings.size())
-            second_order_agg = torch.matmul(self.aggregate_graphsage(second_order_embeddings), self.second_order_weight)
+            second_order_agg = torch.matmul(self.aggregate_graphsage(second_order_embeddings), self.second_order_sage_weight).unsqueeze(dim = 0) # from (64) to (1,64)
+            
             # Combine first and second-order aggregations
             combined_1st_2nd = torch.cat([first_order_agg, second_order_agg], dim=1)  # Shape: [batch_size, 2 * embedding_size]
-            refine_weight = self.second_order_weight
+            refine_weight = self.second_order_refine_weight
         else:
             combined_1st_2nd = first_order_agg
 
@@ -168,10 +171,10 @@ class GeneralGNN(nn.Module):
                 support_3rd_idx = [self.user2idx[userid] for userid in support_3rd]
                 third_order_embeddings = self.user_embeddings(torch.Tensor(support_3rd_idx).type(torch.long))  # Shape: [batch_size, num_neighbors_3rd, embedding_size]
 
-            third_order_agg = torch.matmul(self.aggregate_graphsage(third_order_embeddings), self.third_order_weight)
+            third_order_agg = torch.matmul(self.aggregate_graphsage(third_order_embeddings), self.third_order_sage_weight).unsqueeze(dim=0)
             # Combine first, second, and third-order aggregations
             combined_1st_2nd_3rd = torch.cat([combined_1st_2nd, third_order_agg], dim=1)  # Shape: [batch_size, 3 * embedding_size]
-            refine_weight = self.third_order_weight
+            refine_weight = self.third_order_refine_weight
         else:
             combined_1st_2nd_3rd = combined_1st_2nd
 
@@ -185,6 +188,8 @@ class GeneralGNN(nn.Module):
 
         # Apply a transformation layer (e.g., MLP) to refine embeddings
         refined_embedding = self.refine_embedding(combined_1st_2nd_3rd, target_embeddings, refine_weight)
+
+        #print(refined_embedding.size())
 
         return refined_embedding
 
