@@ -1,3 +1,5 @@
+import ast
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,7 +7,7 @@ import numpy as np
 
 
 class GeneralGNN(nn.Module):
-    def __init__(self, name, settings):
+    def __init__(self, name, settings, user2idx, item2idx):
         super().__init__()
         self.name = name
 
@@ -55,6 +57,10 @@ class GeneralGNN(nn.Module):
         # Optimizer (you may need separate optimizers for different components if required)
         self.optimizer = torch.optim.Adagrad(self.parameters(), lr=self.learning_rate)
 
+        # index and id mappings
+        self.user2idx = user2idx
+        self.item2idx = item2idx
+
     def create_agent_network(self, state_size):
         """
         Creates an agent network for second or third-order tasks.
@@ -67,12 +73,21 @@ class GeneralGNN(nn.Module):
         )
     
 
-    def reload_embedding(self, new_user_embedding_path="path.pt", new_item_embedding_path="path.pt"):
-        new_user_embedding = torch.load(new_user_embedding_path).float()
-        new_item_embedding = torch.load(new_item_embedding_path).float()
+    def reload_embedding(self, new_user_embedding_path="path.csv", new_item_embedding_path="path.csv"):
+        new_user_embedding_df = pd.from_csv(new_user_embedding_path)
+        new_item_embedding_df = pd.from_csv(new_item_embedding_path)
 
-        self.user_embeddings.weight.data = new_user_embedding
-        self.item_embeddings.weight.data = new_item_embedding
+        user_embeddings = torch.tensor(new_user_embedding_df['embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
+        item_embeddings = torch.tensor(new_item_embedding_df['embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
+
+        self.user_embeddings.weight.data = user_embeddings
+        self.item_embeddings.weight.data = item_embeddings
+
+        self.idx2user = new_user_embedding_df['user'].to_dict()
+        self.user2idx = {user:idx for idx,user in self.idx2user.items()}
+
+        self.idx2item = new_item_embedding_df['item'].to_dict()
+        self.item2idx = {item:idx for idx,item in self.idx2item.items()}
         
 
     def forward(self, target_ids, support_1st, support_2nd=None, support_3rd=None, task="user", aggregation="GAT"):
@@ -90,7 +105,6 @@ class GeneralGNN(nn.Module):
         Returns:
             Tensor: Predicted embeddings for the target users/items. Shape: [batch_size, embedding_size].
         """
-        self.userid2idx = {}
         # Get embeddings for first-order neighbors
         if task == "user":
             # First-order neighbors are items for user tasks
