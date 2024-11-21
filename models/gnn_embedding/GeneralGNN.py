@@ -7,7 +7,7 @@ import numpy as np
 
 
 class GeneralGNN(nn.Module):
-    def __init__(self, name, settings, user2idx, item2idx):
+    def __init__(self, name, settings, init_user_embedding_path, init_item_embedding_path):
         super().__init__()
         self.name = name
 
@@ -58,8 +58,20 @@ class GeneralGNN(nn.Module):
         self.optimizer = torch.optim.Adagrad(self.parameters(), lr=self.learning_rate)
 
         # index and id mappings
-        self.user2idx = user2idx
-        self.item2idx = item2idx
+        init_user_embedding_df = pd.from_csv(init_user_embedding_path)
+        init_item_embedding_df = pd.from_csv(init_item_embedding_path)
+
+        user_embeddings = torch.tensor(init_user_embedding_df['embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
+        item_embeddings = torch.tensor(init_item_embedding_df['embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
+
+        self.user_embeddings.weight.data = user_embeddings
+        self.item_embeddings.weight.data = item_embeddings
+
+        self.idx2user = init_user_embedding_df['user'].to_dict()
+        self.user2idx = {user:idx for idx,user in self.idx2user.items()}
+
+        self.idx2item = init_item_embedding_df['item'].to_dict()
+        self.item2idx = {item:idx for idx,item in self.idx2item.items()}
 
     def create_agent_network(self, state_size):
         """
