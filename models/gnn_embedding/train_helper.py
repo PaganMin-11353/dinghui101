@@ -130,9 +130,16 @@ def validate_task(model, valid_loader, loss_fn, device, task, order):
             support_3rd = support_3rd.to(device) if support_3rd is not None else None
             oracle_embeddings = oracle_embeddings.to(device)
 
-            predicted_embeddings = model(
-                target_ids, support_1st, support_2nd, support_3rd, task=task
-            )
+            try:
+                predicted_embeddings = model(target_ids, support_1st, support_2nd, support_3rd, task=task)
+            except IndexError as e:
+                print(f"IndexError during validation: {e}")
+                print(f"Support_1st IDs: {support_1st}")
+                if support_2nd is not None:
+                    print(f"Support_2nd IDs: {support_2nd}")
+                if support_3rd is not None:
+                    print(f"Support_3rd IDs: {support_3rd}")
+                raise
 
             target = torch.ones(predicted_embeddings.size(0), device=device)
             loss = loss_fn(predicted_embeddings, oracle_embeddings, target)

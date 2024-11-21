@@ -17,12 +17,6 @@ class GeneralGNN(nn.Module):
         self.learning_rate = settings.learning_rate
         self.num_items = settings.num_items
         self.num_users = settings.num_users
-        
-        # self.learning_rate_downstream = settings.learning_rate_downstream
-        # self.k = settings.k
-        # self.dropout = settings.dropout
-        # self.batch_size = settings.batch_size
-        # self.decay = settings.decay
 
         # Transformer encoder structure
         self.dropout_rate = settings.dropout_rate
@@ -31,8 +25,8 @@ class GeneralGNN(nn.Module):
         self.num_blocks = settings.num_blocks
 
         # Embedding matrices
-        self.user_embeddings = nn.Embedding(self.num_users + 1, self.embedding_size)
-        self.item_embeddings = nn.Embedding(self.num_items + 1, self.embedding_size)
+        self.user_embeddings = nn.Embedding(self.num_users + 1, self.embedding_size, padding_idx=self.num_users)
+        self.item_embeddings = nn.Embedding(self.num_items + 1, self.embedding_size, padding_idx=self.num_items)
 
         # Initialize padding embedding (last row for padding)
         with torch.no_grad():
@@ -62,13 +56,6 @@ class GeneralGNN(nn.Module):
 
         # Optimizer (you may need separate optimizers for different components if required)
         self.optimizer = torch.optim.Adagrad(self.parameters(), lr=self.learning_rate)
-
-        # # Pretrained embeddings (optional)
-        # self.original_user_ebd = torch.tensor(np.load(settings.pre_train_user_ebd_path), dtype=torch.float32)
-        # self.original_item_ebd = torch.tensor(np.load(settings.pre_train_item_ebd_path), dtype=torch.float32)
-        # padding_ebd = torch.zeros((1, self.embedding_size), dtype=torch.float32)
-        # self.original_user_ebd = torch.cat([self.original_user_ebd, padding_ebd], dim=0)
-        # self.original_item_ebd = torch.cat([self.original_item_ebd, padding_ebd], dim=0)
 
     def create_agent_network(self, state_size):
         """
@@ -278,7 +265,7 @@ class GeneralGNN(nn.Module):
             # Third-order embeddings
             support_ori_ebd_3rd = self.item_embeddings(support_item_3rd)
             support_encode_3rd = torch.mean(self.encoder(support_ori_ebd_3rd), dim=1)  # [batch_size, embedding_size]
-            ori_3rd_ebd  = torch.mean(support_ori_ebd_3rd, dim=1) # [batch_size, embedding_size
+            ori_3rd_ebd  = torch.mean(support_ori_ebd_3rd, dim=1) # [batch_size, embedding_size]
 
             # Second-order embeddings
             support_ori_ebd_2nd = self.user_embeddings(support_user_2nd_)
@@ -345,76 +332,8 @@ class GeneralGNN(nn.Module):
             loss_3rd_item = -torch.mean(cosine_similarity)
 
             return predict_i_3rd, cosine_similarity, loss_3rd_item
-
-            
-class Encoder(nn.Module):
-    def __init__(self, embedding_size, num_blocks, num_heads, d_ff, dropout_rate):
-        """
-        Encoder module for multi-head attention and feedforward transformations.
-
-        Args:
-            embedding_size (int): Size of embeddings.
-            num_blocks (int): Number of attention blocks.
-            num_heads (int): Number of attention heads.
-            d_ff (int): Hidden layer size in feedforward network.
-            dropout_rate (float): Dropout rate.
-        """
-        super().__init__()
-        self.embedding_size = embedding_size
-        self.num_blocks = num_blocks
-        self.num_heads = num_heads
-        self.d_ff = d_ff
-        self.dropout_rate = dropout_rate
-
-        # Define multi-head attention and feedforward layers for each block
-        self.attention_blocks = nn.ModuleList([
-            nn.MultiheadAttention(embed_dim=embedding_size, num_heads=num_heads, dropout=dropout_rate)
-            for _ in range(num_blocks)
-        ])
-        self.feedforward_blocks = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(embedding_size, d_ff),
-                nn.ReLU(),
-                nn.Linear(d_ff, embedding_size),
-                nn.Dropout(dropout_rate)
-            )
-            for _ in range(num_blocks)
-        ])
-        self.layer_norms_attention = nn.ModuleList([nn.LayerNorm(embedding_size) for _ in range(num_blocks)])
-        self.layer_norms_ff = nn.ModuleList([nn.LayerNorm(embedding_size) for _ in range(num_blocks)])
-
-    def forward(self, input):
-        """
-        Forward pass for the encoder.
-
-        Args:
-            input (Tensor): Input tensor of shape [batch_size, num_neighbors, embedding_size].
-
-        Returns:
-            enc (Tensor): Output tensor of shape [batch_size, num_neighbors, embedding_size].
-        """
-        # Scale the input embeddings
-        enc = input * (self.embedding_size ** 0.5)  # [b, n, e]
-
-        # Process through each block
-        for i in range(self.num_blocks):
-            # Multi-head self-attention
-            enc_transposed = enc.permute(1, 0, 2)  # Convert to [n, b, e] for PyTorch MultiheadAttention
-            attn_output, _ = self.attention_blocks[i](enc_transposed, enc_transposed, enc_transposed)
-            attn_output = attn_output.permute(1, 0, 2)  # Convert back to [b, n, e]
-            # Add and normalize
-            enc = self.layer_norms_attention[i](enc + attn_output)
-
-            # Feedforward
-            ff_output = self.feedforward_blocks[i](enc)
-            # Add and normalize
-            enc = self.layer_norms_ff[i](enc + ff_output)
-
-        return enc  # [b, n, e]
-
-
-
-################ BELOW ARE HELPER FUNCTIONS ####################
+    
+    ################ BELOW ARE HELPER FUNCTIONS ####################
     def aggregate_gat(self, neighbor_embeddings):
         """
         Perform attention-weighted aggregation for GAT.
@@ -515,3 +434,72 @@ class Encoder(nn.Module):
         """
         init_range = np.sqrt(6.0 / (shape[0] + shape[1]))
         return torch.empty(shape).uniform_(-init_range, init_range)
+
+            
+class Encoder(nn.Module):
+    def __init__(self, embedding_size, num_blocks, num_heads, d_ff, dropout_rate):
+        """
+        Encoder module for multi-head attention and feedforward transformations.
+
+        Args:
+            embedding_size (int): Size of embeddings.
+            num_blocks (int): Number of attention blocks.
+            num_heads (int): Number of attention heads.
+            d_ff (int): Hidden layer size in feedforward network.
+            dropout_rate (float): Dropout rate.
+        """
+        super().__init__()
+        self.embedding_size = embedding_size
+        self.num_blocks = num_blocks
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.dropout_rate = dropout_rate
+
+        # Define multi-head attention and feedforward layers for each block
+        self.attention_blocks = nn.ModuleList([
+            nn.MultiheadAttention(embed_dim=embedding_size, num_heads=num_heads, dropout=dropout_rate)
+            for _ in range(num_blocks)
+        ])
+        self.feedforward_blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(embedding_size, d_ff),
+                nn.ReLU(),
+                nn.Linear(d_ff, embedding_size),
+                nn.Dropout(dropout_rate)
+            )
+            for _ in range(num_blocks)
+        ])
+        self.layer_norms_attention = nn.ModuleList([nn.LayerNorm(embedding_size) for _ in range(num_blocks)])
+        self.layer_norms_ff = nn.ModuleList([nn.LayerNorm(embedding_size) for _ in range(num_blocks)])
+
+    def forward(self, input):
+        """
+        Forward pass for the encoder.
+
+        Args:
+            input (Tensor): Input tensor of shape [batch_size, num_neighbors, embedding_size].
+
+        Returns:
+            enc (Tensor): Output tensor of shape [batch_size, num_neighbors, embedding_size].
+        """
+        # Scale the input embeddings
+        enc = input * (self.embedding_size ** 0.5)  # [b, n, e]
+
+        # Process through each block
+        for i in range(self.num_blocks):
+            # Multi-head self-attention
+            enc_transposed = enc.permute(1, 0, 2)  # Convert to [n, b, e] for PyTorch MultiheadAttention
+            attn_output, _ = self.attention_blocks[i](enc_transposed, enc_transposed, enc_transposed)
+            attn_output = attn_output.permute(1, 0, 2)  # Convert back to [b, n, e]
+            # Add and normalize
+            enc = self.layer_norms_attention[i](enc + attn_output)
+
+            # Feedforward
+            ff_output = self.feedforward_blocks[i](enc)
+            # Add and normalize
+            enc = self.layer_norms_ff[i](enc + ff_output)
+
+        return enc  # [b, n, e]
+
+
+
