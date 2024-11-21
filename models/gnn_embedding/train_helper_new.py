@@ -9,24 +9,25 @@ def train_first_order_task(model, train_data, epochs, device, task="user"):
     model.to(device)
 
     if (task == "user"):
-        target_ids_train = torch.tensor(train_data["userid"].values,dtype=torch.long)
+        target_ids_train = train_data["userid"].tolist()
     else:
-        target_ids_train = torch.tensor(train_data["itemid"].values,dtype=torch.long)
-    support_1st_train = torch.tensor(train_data["1st_order"].apply(), dtype=torch.long)
-    oracle_embeddings_train = torch.tensor(train_data['oracle_embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
+        target_ids_train = train_data["itemid"].tolist()
+    support_1st_train = train_data["1st_order"].tolist()
+    oracle_embeddings_train = torch.tensor(train_data['oracle_embedding'].tolist(), dtype=torch.float32)
 
-    target_ids_train = target_ids_train.to(device)
-    support_1st_train = support_1st_train.to(device)
+    # target_ids_train = target_ids_train.to(device)
+    # support_1st_train = support_1st_train.to(device)
     # support_2nd = support_2nd.to(device)
     # support_3rd = support_3rd.to(device)
-    oracle_embeddings_train = oracle_embeddings_train.to(device)
+    # oracle_embeddings_train = oracle_embeddings_train.to(device)
     # target_ids_valid, support_1st_valid, _, _, oracle_embeddings_valid = valid_data
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(1, epochs + 1): 
         model.train()
 
         # 前向传播
-        predicted_embeddings = model(target_ids_train, support_1st_train, None, None, task=task)
+        for i in range(0, len(target_ids_train)):
+            predicted_embeddings = model(target_ids_train[i], support_1st_train[i], None, None, task=task)
 
         # 计算损失
         target = torch.ones(predicted_embeddings.size(0), device=device)
@@ -59,17 +60,17 @@ def train_second_order_task(model, train_data, epochs, device, task="user"):
     model.to(device)
 
     if (task == "user"):
-        target_ids_train = torch.tensor(train_data["userid"].values,dtype=torch.long)
+        target_ids_train = train_data["userid"].tolist()
     else:
-        target_ids_train = torch.tensor(train_data["itemid"].values,dtype=torch.long)
-    support_1st_train = torch.tensor(train_data["1st_order"].apply(ast.literal_eval).tolist(), dtype=torch.long)
-    support_2nd_train = torch.tensor(train_data["2nd_order"].apply(ast.literal_eval).tolist(), dtype=torch.long)
-    oracle_embeddings_train = torch.tensor(train_data['oracle_embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
+        target_ids_train = train_data["itemid"].tolist()
+    support_1st_train = train_data["1st_order"].tolist()
+    support_2nd_train = train_data["2nd_order"].tolist()
+    oracle_embeddings_train = torch.tensor(train_data['oracle_embedding'].tolist(), dtype=torch.float32)
     # target_ids_valid, support_1st_valid, support_2nd_valid, _, oracle_embeddings_valid = valid_data
 
-    target_ids_train = target_ids_train.to(device)
-    support_1st_train = support_1st_train.to(device)
-    support_2nd_train = support_2nd_train.to(device)
+    # target_ids_train = target_ids_train.to(device)
+    # support_1st_train = support_1st_train.to(device)
+    # support_2nd_train = support_2nd_train.to(device)
     # support_3rd = support_3rd.to(device)
     oracle_embeddings_train = oracle_embeddings_train.to(device)
 
@@ -77,9 +78,8 @@ def train_second_order_task(model, train_data, epochs, device, task="user"):
         model.train()
 
         # 前向传播
-        predicted_embeddings = model(
-            target_ids_train, support_1st_train, support_2nd_train, None, task=task
-        )
+        for i in range(0, len(target_ids_train)):
+            predicted_embeddings = model(target_ids_train[i], support_1st_train[i], support_2nd_train[i], None, task=task)
 
         # 计算损失
         target = torch.ones(predicted_embeddings.size(0), device=device)
@@ -101,26 +101,27 @@ def train_third_order_task(model, train_data, epochs, device, task="user"):
     model.to(device)
 
     if (task == "user"):
-        target_ids_train = torch.tensor(train_data["userid"].values,dtype=torch.long)
+        target_ids_train = train_data["userid"].tolist()
     else:
-        target_ids_train = torch.tensor(train_data["itemid"].values,dtype=torch.long)
-    support_1st_train = torch.tensor(train_data["1st_order"].apply(ast.literal_eval).tolist(), dtype=torch.long)
-    support_2nd_train = torch.tensor(train_data["2nd_order"].apply(ast.literal_eval).tolist(), dtype=torch.long)
-    support_3rd_train = torch.tensor(train_data["3rd_order"].apply(ast.literal_eval).tolist(), dtype=torch.long)
-    oracle_embeddings_train = torch.tensor(train_data['oracle_embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
+        target_ids_train = train_data["itemid"].tolist()
+    support_1st_train = train_data["1st_order"].tolist()
+    support_2nd_train = train_data["2nd_order"].tolist()
+    support_3rd_train = train_data["3rd_order"].tolist()
+    oracle_embeddings_train = torch.tensor(train_data['oracle_embedding'].tolist(), dtype=torch.float32)
     # target_ids_valid, support_1st_valid, support_2nd_valid, support_3rd_valid, oracle_embeddings_valid = valid_data
 
-    target_ids_train = target_ids_train.to(device)
-    support_1st_train = support_1st_train.to(device)
-    support_2nd_train = support_2nd_train.to(device)
-    support_3rd_train = support_3rd_train.to(device)
+    # target_ids_train = target_ids_train.to(device)
+    # support_1st_train = support_1st_train.to(device)
+    # support_2nd_train = support_2nd_train.to(device)
+    # support_3rd_train = support_3rd_train.to(device)
     oracle_embeddings_train = oracle_embeddings_train.to(device)
 
     for epoch in range(1, epochs + 1):
         model.train()
 
         # 前向传播
-        predicted_embeddings = model(target_ids_train, support_1st_train, support_2nd_train, support_3rd_train, task=task)
+        for i in range(0, len(target_ids_train)):
+            predicted_embeddings = model(target_ids_train[i], support_1st_train[i], support_2nd_train[i], support_3rd_train[i], task=task)
 
         # 计算损失
         target = torch.ones(predicted_embeddings.size(0), device=device)

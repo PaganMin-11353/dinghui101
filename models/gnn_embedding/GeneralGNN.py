@@ -119,31 +119,41 @@ class GeneralGNN(nn.Module):
         """
         # Get embeddings for first-order neighbors
         if task == "user":
-            # First-order neighbors are items for user tasks
-            support_1st_idx = [self.userid2idx[userid] for userid in support_1st]
-            first_order_embeddings = self.item_embeddings(support_1st_idx)  # Shape: [batch_size, num_neighbors_1st, embedding_size]
+            # First-order neighbors are items for user tasks'
+            support_1st_idx = [self.item2idx[itemid] for itemid in support_1st]
+            first_order_embeddings = self.item_embeddings(torch.Tensor(support_1st_idx).type(torch.long))  # Shape: [batch_size, num_neighbors_1st, embedding_size]
         elif task == "item":
             # First-order neighbors are users for item tasks
-            first_order_embeddings = self.user_embeddings(support_1st)  # Shape: [batch_size, num_neighbors_1st, embedding_size]
+            support_1st_idx = [self.user2idx[userid] for userid in support_1st]
+            first_order_embeddings = self.user_embeddings(support_1st_idx)  # Shape: [batch_size, num_neighbors_1st, embedding_size]
         else:
             raise ValueError("Task must be 'user' or 'item'")
 
         # Aggregate first-order embeddings
-        first_order_agg = torch.matmul(self.first_order_weight, self.aggregate_graphsage(first_order_embeddings))
+        # print(self.first_order_weight.size())
+        # print(first_order_embeddings.size())
+        # print(self.aggregate_graphsage(first_order_embeddings).unsqueeze(dim=0).size()) #64
+        # print(self.aggregate_graphsage(first_order_embeddings).unsqueeze(dim=0))
 
+        first_order_agg = torch.matmul(self.aggregate_graphsage(first_order_embeddings).unsqueeze(dim=0), self.first_order_weight)
+        refine_weight = self.first_order_weight
 
         # Handle second-order neighbors
         if support_2nd is not None:
             if task == "user":
                 # Second-order neighbors are users for user tasks
-                second_order_embeddings = self.user_embeddings(support_2nd)  # Shape: [batch_size, num_neighbors_2nd, embedding_size]
+                support_2nd_idx = [self.user2idx[userid] for userid in support_2nd]
+                second_order_embeddings = self.user_embeddings(torch.Tensor(support_2nd_idx).type(torch.long))  # Shape: [batch_size, num_neighbors_2nd, embedding_size]
             elif task == "item":
                 # Second-order neighbors are items for item tasks
-                second_order_embeddings = self.item_embeddings(support_2nd)  # Shape: [batch_size, num_neighbors_2nd, embedding_size]
+                support_2nd_idx = [self.item2idx[itemid] for itemid in support_2nd]
+                second_order_embeddings = self.item_embeddings(torch.Tensor(support_2nd_idx).type(torch.long))  # Shape: [batch_size, num_neighbors_2nd, embedding_size]
             
-            second_order_agg = torch.matmul(self.second_order_weight, self.aggregate_graphsage(second_order_embeddings))
+            print(second_order_embeddings.size())
+            second_order_agg = torch.matmul(self.aggregate_graphsage(second_order_embeddings), self.second_order_weight)
             # Combine first and second-order aggregations
             combined_1st_2nd = torch.cat([first_order_agg, second_order_agg], dim=1)  # Shape: [batch_size, 2 * embedding_size]
+            refine_weight = self.second_order_weight
         else:
             combined_1st_2nd = first_order_agg
 
@@ -151,25 +161,30 @@ class GeneralGNN(nn.Module):
         if support_3rd is not None:
             if task == "user":
                 # Third-order neighbors are items for user tasks
-                third_order_embeddings = self.item_embeddings(support_3rd)  # Shape: [batch_size, num_neighbors_3rd, embedding_size]
+                support_3rd_idx = [self.item2idx[itemid] for itemid in support_3rd]
+                third_order_embeddings = self.item_embeddings(torch.Tensor(support_3rd_idx).type(torch.long))  # Shape: [batch_size, num_neighbors_3rd, embedding_size]
             elif task == "item":
                 # Third-order neighbors are users for item tasks
-                third_order_embeddings = self.user_embeddings(support_3rd)  # Shape: [batch_size, num_neighbors_3rd, embedding_size]
+                support_3rd_idx = [self.user2idx[userid] for userid in support_3rd]
+                third_order_embeddings = self.user_embeddings(torch.Tensor(support_3rd_idx).type(torch.long))  # Shape: [batch_size, num_neighbors_3rd, embedding_size]
 
-            third_order_agg = torch.matmul(self.third_order_weight, self.aggregate_graphsage(third_order_embeddings))
+            third_order_agg = torch.matmul(self.aggregate_graphsage(third_order_embeddings), self.third_order_weight)
             # Combine first, second, and third-order aggregations
             combined_1st_2nd_3rd = torch.cat([combined_1st_2nd, third_order_agg], dim=1)  # Shape: [batch_size, 3 * embedding_size]
+            refine_weight = self.third_order_weight
         else:
             combined_1st_2nd_3rd = combined_1st_2nd
 
         # Final embedding transformation
         if task == "user":
-            target_embeddings = self.user_embeddings(target_ids)  # Shape: [batch_size, embedding_size]
+            targt_idx = [self.user2idx[target_ids]]
+            target_embeddings = self.user_embeddings(torch.Tensor(targt_idx).type(torch.long))  # Shape: [batch_size, embedding_size]
         elif task == "item":
-            target_embeddings = self.item_embeddings(target_ids)  # Shape: [batch_size, embedding_size]
+            targt_idx = [self.item2idx[target_ids]]
+            target_embeddings = self.item_embeddings(torch.Tensor(targt_idx).type(torch.long))  # Shape: [batch_size, embedding_size]
 
         # Apply a transformation layer (e.g., MLP) to refine embeddings
-        refined_embedding = self.refine_embedding(combined_1st_2nd_3rd, target_embeddings)
+        refined_embedding = self.refine_embedding(combined_1st_2nd_3rd, target_embeddings, refine_weight)
 
         return refined_embedding
 
@@ -366,12 +381,12 @@ class GeneralGNN(nn.Module):
         Returns:
             Tensor: Aggregated embedding. Shape: [batch_size, embedding_size].
         """
-        aggregated_embedding = torch.mean(neighbor_embeddings, dim=1)
+        aggregated_embedding = torch.mean(neighbor_embeddings, dim=0)
         return aggregated_embedding # [batch_size, embedding_size]
 
 
 
-    def refine_embedding(self, combined_embeddings, target_embeddings):
+    def refine_embedding(self, combined_embeddings, target_embeddings, weight):
         """
         Refines the embeddings by applying a transformation layer.
         Args:
@@ -381,7 +396,8 @@ class GeneralGNN(nn.Module):
             Tensor: Refined embeddings. Shape: [batch_size, embedding_size].
         """
         # Apply transformation to the combined embedding
-        refined = torch.mm(combined_embeddings, self.second_order_weight)  # [batch_size, embedding_size]
+        refined = torch.mm(combined_embeddings, weight)  # [batch_size, embedding_size]
+        # refined = torch.mm(combined_embeddings, self.second_order_weight)  # [batch_size, embedding_size]
         refined += target_embeddings  # Residual connection
         return F.relu(refined)
 
