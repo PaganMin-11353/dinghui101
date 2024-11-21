@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+
 class GeneralGNN(nn.Module):
     def __init__(self, name, settings):
         super().__init__()
@@ -25,8 +26,8 @@ class GeneralGNN(nn.Module):
         self.num_blocks = settings.num_blocks
 
         # Embedding matrices
-        self.user_embeddings = nn.Embedding(self.num_users + 1, self.embedding_size, padding_idx=self.num_users)
-        self.item_embeddings = nn.Embedding(self.num_items + 1, self.embedding_size, padding_idx=self.num_items)
+        self.user_embeddings = nn.Embedding(self.num_users + 1, self.embedding_size)
+        self.item_embeddings = nn.Embedding(self.num_items + 1, self.embedding_size)
 
         # Initialize padding embedding (last row for padding)
         with torch.no_grad():
@@ -43,12 +44,9 @@ class GeneralGNN(nn.Module):
         )
 
         # Trainable weight matrices for second and third-order aggregation
-        self.second_order_weight = nn.Parameter(
-            torch.randn(self.embedding_size, self.embedding_size) * np.sqrt(2.0 / self.embedding_size)
-        )
-        self.third_order_weight = nn.Parameter(
-            torch.randn(self.embedding_size, self.embedding_size) * np.sqrt(2.0 / self.embedding_size)
-        )
+        self.first_order_weight = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
+        self.second_order_weight = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
+        self.third_order_weight = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
 
         # Parameters for agent networks
         self.second_order_agent = self.create_agent_network(self.embedding_size)
@@ -94,12 +92,8 @@ class GeneralGNN(nn.Module):
             raise ValueError("Task must be 'user' or 'item'")
 
         # Aggregate first-order embeddings
-        if aggregation == "GAT":
-            first_order_agg = self.aggregate_gat(first_order_embeddings)  # Shape: [batch_size, embedding_size]
-        elif aggregation == "GraphSAGE":
-            first_order_agg = self.aggregate_graphsage(first_order_embeddings)
-        else:
-            raise ValueError("Unsupported aggregation method")
+        first_order_agg = torch.matmul(self.first_order_weight, self.aggregate_graphsage(first_order_embeddings))
+
 
         # Handle second-order neighbors
         if support_2nd is not None:
@@ -110,7 +104,7 @@ class GeneralGNN(nn.Module):
                 # Second-order neighbors are items for item tasks
                 second_order_embeddings = self.item_embeddings(support_2nd)  # Shape: [batch_size, num_neighbors_2nd, embedding_size]
             
-            second_order_agg = self.aggregate_gat(second_order_embeddings) if aggregation == "GAT" else self.aggregate_graphsage(second_order_embeddings)
+            second_order_agg = torch.matmul(self.second_order_weight, self.aggregate_graphsage(second_order_embeddings))
             # Combine first and second-order aggregations
             combined_1st_2nd = torch.cat([first_order_agg, second_order_agg], dim=1)  # Shape: [batch_size, 2 * embedding_size]
         else:
@@ -125,7 +119,7 @@ class GeneralGNN(nn.Module):
                 # Third-order neighbors are users for item tasks
                 third_order_embeddings = self.user_embeddings(support_3rd)  # Shape: [batch_size, num_neighbors_3rd, embedding_size]
 
-            third_order_agg = self.aggregate_gat(third_order_embeddings) if aggregation == "GAT" else self.aggregate_graphsage(third_order_embeddings)
+            third_order_agg = torch.matmul(self.third_order_weight, self.aggregate_graphsage(third_order_embeddings))
             # Combine first, second, and third-order aggregations
             combined_1st_2nd_3rd = torch.cat([combined_1st_2nd, third_order_agg], dim=1)  # Shape: [batch_size, 3 * embedding_size]
         else:
@@ -194,10 +188,6 @@ class GeneralGNN(nn.Module):
         Aggregates second-order neighbors (users and items) to compute user embeddings.
         """
         if name == 'GraphSAGE':
-            # Initialize weights for transformations
-            w_0u = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
-            w_1u = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
-
             # Lookup embeddings for second-order neighbors (users)
             support_ori_ebd_2nd = self.user_embeddings(support_user_2nd)  # [batch_size, n2, embedding_size]
             support_encode_2nd = torch.mean(self.encoder(support_ori_ebd_2nd), dim=1)  # [batch_size, embedding_size]
@@ -209,8 +199,8 @@ class GeneralGNN(nn.Module):
 
             # Concatenate embeddings and apply transformations
             aggregate_2nd = torch.cat([support_encode_2nd, ori_2nd_ebd, ori_1st_ebd], dim=1)  # [batch_size, 3 * embedding_size]
-            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, w_1u)  # [batch_size, embedding_size]
-            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, w_0u)  # [batch_size, embedding_size]
+            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, self.second_order_weight)  # [batch_size, embedding_size]
+            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, self.first_order_weight)  # [batch_size, embedding_size]
 
             # Final prediction for second-order user task
             predict_u_2nd = refined_target_ebd
@@ -226,10 +216,6 @@ class GeneralGNN(nn.Module):
         Aggregates second-order neighbors (items and users) to compute item embeddings.
         """
         if name == 'GraphSAGE':
-            # Initialize weights for transformations
-            w_0i = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
-            w_1i = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
-
             # Lookup embeddings for second-order neighbors (items)
             support_ori_ebd_2nd = self.item_embeddings(support_item_2nd)  # [batch_size, n2, embedding_size]
             support_encode_2nd = torch.mean(self.encoder(support_ori_ebd_2nd), dim=1)  # [batch_size, embedding_size]
@@ -241,8 +227,8 @@ class GeneralGNN(nn.Module):
 
             # Concatenate embeddings and apply transformations
             aggregate_2nd = torch.cat([support_encode_2nd, ori_2nd_ebd, ori_1st_ebd], dim=1)  # [batch_size, 3 * embedding_size]
-            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, w_1i)  # [batch_size, embedding_size]
-            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, w_0i)  # [batch_size, embedding_size]
+            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, self.second_order_weight)  # [batch_size, embedding_size]
+            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, self.first_order_weight)  # [batch_size, embedding_size]
 
             # Final prediction for second-order item task
             predict_i_2nd = refined_target_ebd
@@ -257,11 +243,6 @@ class GeneralGNN(nn.Module):
         Aggregates third-order neighbors (items and users) to compute user embeddings.
         """
         if name == 'GraphSAGE':
-            # Initialize weights for transformations
-            w_0u = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
-            w_1u = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
-            w_2u = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
-
             # Third-order embeddings
             support_ori_ebd_3rd = self.item_embeddings(support_item_3rd)
             support_encode_3rd = torch.mean(self.encoder(support_ori_ebd_3rd), dim=1)  # [batch_size, embedding_size]
@@ -278,12 +259,12 @@ class GeneralGNN(nn.Module):
 
             # Aggregate third-order to second-order
             aggregate_3rd = torch.cat([support_encode_3rd, ori_3rd_ebd, ori_2nd_ebd], dim=1)  # [batch_size, 3 * embedding_size]
-            refined_second_neigh_ebd = torch.matmul(aggregate_3rd, w_2u)  # [batch_size, embedding_size]
+            refined_second_neigh_ebd = torch.matmul(aggregate_3rd, self.third_order_weight)  # [batch_size, embedding_size]
 
             # Aggregate second-order to first-order
             aggregate_2nd = torch.cat([refined_second_neigh_ebd, support_encode_2nd, ori_1st_ebd], dim=1)  # [batch_size, 3 * embedding_size]
-            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, w_1u)  # [batch_size, embedding_size]
-            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, w_0u)  # [batch_size, embedding_size]
+            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, self.second_order_weight)  # [batch_size, embedding_size]
+            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, self.first_order_weight)  # [batch_size, embedding_size]
 
             # Final prediction for third-order user task
             predict_u_3rd = refined_target_ebd
@@ -298,11 +279,6 @@ class GeneralGNN(nn.Module):
         Aggregates third-order neighbors (users and items) to compute item embeddings.
         """
         if name == 'GraphSAGE':
-            # Initialize weights for transformations
-            w_0u = nn.Parameter(self.glorot([self.embedding_size, self.embedding_size]))
-            w_1u = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
-            w_2u = nn.Parameter(self.glorot([3 * self.embedding_size, self.embedding_size]))
-
             # Lookup embeddings for third-order neighbors (users)
             support_ori_ebd_3rd = self.user_embeddings(support_user_3rd)  # [batch_size, n3, embedding_size]
             ori_3rd_ebd = torch.mean(support_ori_ebd_3rd, dim=1)  # [batch_size, embedding_size]
@@ -319,12 +295,12 @@ class GeneralGNN(nn.Module):
 
             # Combine embeddings for third-order aggregation
             aggregate_3rd = torch.cat([support_encode_3rd, ori_3rd_ebd, ori_2nd_ebd], dim=1)  # [batch_size, 3 * embedding_size]
-            refined_second_neigh_ebd = torch.matmul(aggregate_3rd, w_2u)  # [batch_size, embedding_size]
+            refined_second_neigh_ebd = torch.matmul(aggregate_3rd, self.third_order_weight)  # [batch_size, embedding_size]
 
             # Aggregate second-order to first-order
             aggregate_2nd = torch.cat([refined_second_neigh_ebd, support_encode_2nd, ori_1st_ebd], dim=1)  # [batch_size, 3 * embedding_size]
-            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, w_1u)  # [batch_size, embedding_size]
-            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, w_0u)  # [batch_size, embedding_size]
+            refined_first_neigh_ebd = torch.matmul(aggregate_2nd, self.second_order_weight)  # [batch_size, embedding_size]
+            refined_target_ebd = torch.matmul(refined_first_neigh_ebd, self.first_order_weight)  # [batch_size, embedding_size]
 
             # Final prediction for third-order item task
             predict_i_3rd = refined_target_ebd
@@ -332,7 +308,6 @@ class GeneralGNN(nn.Module):
             loss_3rd_item = -torch.mean(cosine_similarity)
 
             return predict_i_3rd, cosine_similarity, loss_3rd_item
-    
     ################ BELOW ARE HELPER FUNCTIONS ####################
     def aggregate_gat(self, neighbor_embeddings):
         """
@@ -354,7 +329,8 @@ class GeneralGNN(nn.Module):
         Returns:
             Tensor: Aggregated embedding. Shape: [batch_size, embedding_size].
         """
-        return torch.mean(neighbor_embeddings, dim=1)  # [batch_size, embedding_size]
+        aggregated_embedding = torch.mean(neighbor_embeddings, dim=1)
+        return aggregated_embedding # [batch_size, embedding_size]
 
 
 
@@ -500,6 +476,3 @@ class Encoder(nn.Module):
             enc = self.layer_norms_ff[i](enc + ff_output)
 
         return enc  # [b, n, e]
-
-
-

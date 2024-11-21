@@ -16,7 +16,19 @@ def train_first_order_task(model, train_loader, valid_loader, epochs, device, ta
         model.train()
         train_loss = 0.0
 
+        print("entering the loop...")
+        print("Debug: train_loader:", train_loader)
+        print("Debug: train_loader length:", len(train_loader))
+
         for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{epochs} - Training First-Order {task} Task"):
+            try:
+                print("Debug: Batch contents:", batch)
+                target_ids, support_1st, _, _, oracle_embeddings = batch
+                print("Debug: Unpacking successful")
+            except Exception as e:
+                print(f"Error during unpacking batch: {e}")
+                continue
+            
             target_ids, support_1st, _, _, oracle_embeddings = batch
             target_ids = target_ids.to(device)
             support_1st = support_1st.to(device)
