@@ -93,6 +93,8 @@ class RecommenderModel():
     def __init__(
         self,
         size: str,  # "100k" or "1m"
+        train_set:pd.DataFrame,
+        test_set:pd.DataFrame,
         num_layers: int = 3,
         embedding_dim: int = 64,
         learning_rate: float = 0.01,
@@ -100,6 +102,13 @@ class RecommenderModel():
         batch_size: int = 1024,
         num_negatives: int =4,
         train_alpha: float = 1.0,
+        paths = {"umam": "umam_embeddings.pt", 
+                                                  "umdm":"umdm_embeddings.pt",
+                                                  "umum":"umum_embeddings.pt",
+                                                  "user_content": "user_content_based_embeddings.pt",
+                                                  "item_content": "movie_genre_hot_embeddings.pt",
+                                                  "user_pretrained": "pretrain_user_embeddings.pt",
+                                                  "item_pretrained": "pretrain_item_embeddings.pt"},
         device: str = 'auto'  # 'auto', 'cuda', 'mps', or 'cpu'
     ) -> None:
         super().__init__()
@@ -108,6 +117,8 @@ class RecommenderModel():
         self.logger = logging.getLogger("Recommender model")
 
         self.data_loader = DataLoader(size=size)
+        self.train_set = train_set
+        self.test_set = test_set
 
         if size not in self.data_loader.DATA_FORMATS:
             raise ValueError(f"Invalid size: {size}. Choose from {list(self.data_loader.DATA_FORMATS.keys())}.")
@@ -120,6 +131,7 @@ class RecommenderModel():
         self.batch_size = batch_size
         self.num_negatives = num_negatives
         self.train_alpha = train_alpha
+        self.paths = paths
         self.device = self._get_device(device)
 
         self.user2idx = {}
@@ -219,11 +231,11 @@ class RecommenderModel():
 
     def prepare_training_data(self) -> None:
         self.logger.info("Preparing data...")
-        self.ratings = self._load_ratings()
-        
+        self.ratings = pd.concat([self.train_set, self.test_set], axis=0, ignore_index=True)
+
         user_list = self.ratings['user'].unique().tolist()
         item_list = self.ratings['item'].unique().tolist()
-
+    
         self.user2idx = {user: idx for idx, user in enumerate(user_list)}
         self.idx2user = {idx: user for user, idx in self.user2idx.items()}
 
@@ -236,31 +248,10 @@ class RecommenderModel():
         self.ratings['user_idx'] = self.ratings['user'].map(self.user2idx)
         self.ratings['item_idx'] = self.ratings['item'].map(self.item2idx)
 
-        # train_df, test_df = train_test_split(
-        #     self.ratings,
-        #     test_size=0.3,
-        #     random_state=42,
-        #     stratify=self.ratings['user_idx']
-        # )
+        train_df = self.ratings[:len(self.train_set)]
+        test_df = self.ratings[len(self.train_set):]
 
-        # train test split, keep 1 useritem for every user
-        train_list = []
-        test_list = []
-
-        grouped = self.ratings.groupby('user_idx')
-        for user, group in grouped:
-            if len(group) < 2:
-                train_list.append(group)
-            else:
-                test_sample = group.sample(n=1, random_state=42)
-                train_sample = group.drop(test_sample.index)
-                train_list.append(train_sample)
-                test_list.append(test_sample)
-
-        train_df = pd.concat(train_list).reset_index(drop=True)
-        test_df = pd.concat(test_list).reset_index(drop=True)
         self.test_pre = test_df.copy()
-
         global_neg_set = set(zip(self.ratings['user_idx'], self.ratings['item_idx']))
 
         train_neg_df = self._generate_negative_samples(train_df, global_neg_set=global_neg_set)
