@@ -101,6 +101,13 @@ class LightGCNModel2():
         batch_size: int = 1024,
         num_negatives: int =4,
         train_alpha: float = 1.0,
+        paths = {"umam": "umam_embeddings.pt", 
+                                                  "umdm":"umdm_embeddings.pt",
+                                                  "umum":"umum_embeddings.pt",
+                                                  "user_content": "user_content_based_embeddings.pt",
+                                                  "item_content": "movie_genre_hot_embeddings.pt",
+                                                  "user_pretrained": "pretrain_user_embeddings.pt",
+                                                  "item_pretrained": "pretrain_item_embeddings.pt"},
         device: str = 'auto'  # 'auto', 'cuda', 'mps', or 'cpu'
     ) -> None:
         super().__init__()
@@ -120,6 +127,7 @@ class LightGCNModel2():
         self.batch_size = batch_size
         self.num_negatives = num_negatives
         self.train_alpha = train_alpha
+        self.paths = paths
         self.device = self._get_device(device)
 
         self.user2idx = {}

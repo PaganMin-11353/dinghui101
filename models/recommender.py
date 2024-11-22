@@ -31,14 +31,19 @@ class TransformerLayer(nn.Module):
 
         # Calculate attention scores
         updated_user_embedding, _ = self.attention(user_embedding_concat, item_embedding_concat, item_embedding_concat)
+        _, updated_item_embedding = self.attention(item_embedding_concat, updated_user_embedding, updated_user_embedding)
+        updated_item_embedding = item_embedding_concat
 
         # Remove batch dimension
         updated_user_embedding = updated_user_embedding.squeeze(1)
+        updated_item_embedding = updated_item_embedding.squeeze(1)
 
-        return updated_user_embedding
+        return updated_user_embedding, updated_item_embedding
     
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
+        super(MLP, self).__init__()
+
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
@@ -82,9 +87,9 @@ class Recommender(nn.Module):
         # user_embedding = user_input_emb_2
         # item_embedding = item_input_emb_2
         # Updated user embedding via transformation layer
-        updated_user_embedding = self.transformer_layer(user_embedding, item_embedding)
+        user_embedding, item_embedding = self.transformer_layer(user_embedding, item_embedding)
 
-        return updated_user_embedding, item_embedding
+        return user_embedding, item_embedding
 
         
     
@@ -92,7 +97,6 @@ class Recommender(nn.Module):
 class RecommenderModel():
     def __init__(
         self,
-        size: str,  # "100k" or "1m"
         train_set:pd.DataFrame,
         test_set:pd.DataFrame,
         num_layers: int = 3,
@@ -116,14 +120,10 @@ class RecommenderModel():
         logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - [%(levelname)s]: %(message)s")
         self.logger = logging.getLogger("Recommender model")
 
-        self.data_loader = DataLoader(size=size)
+        self.data_loader = DataLoader(size="100k")
         self.train_set = train_set
         self.test_set = test_set
-
-        if size not in self.data_loader.DATA_FORMATS:
-            raise ValueError(f"Invalid size: {size}. Choose from {list(self.data_loader.DATA_FORMATS.keys())}.")
-
-        self.size = size
+     
         self.num_layers = num_layers
         self.embedding_dim = embedding_dim
         self.learning_rate = learning_rate
@@ -195,14 +195,14 @@ class RecommenderModel():
     def _load_user_features(self) -> pd.DataFrame:
         user_features = self.data_loader.load_user_features(convert_age_to_range=True,convert_occupation_to_code=False)
         return user_features
-    
+
     def load_input_embeddings(self, paths = {"umam": "umam_embeddings.pt", 
                                                   "umdm":"umdm_embeddings.pt",
                                                   "umum":"umum_embeddings.pt",
                                                   "user_content": "user_content_based_embeddings.pt",
                                                   "item_content": "movie_genre_hot_embeddings.pt",
-                                                  "user_pretrained": "user_pretrained_embedding.pt",
-                                                  "item_pretrained": "item_pretrained_embedding.pt"}):
+                                                  "user_pretrained": "pretrain_user_embeddings.pt",
+                                                  "item_pretrained": "pretrain_item_embeddings.pt"}):
         
         ### Content-based and meta-path features
         # Load the meta-path and content-based features of users
@@ -224,8 +224,12 @@ class RecommenderModel():
             item_input_emb[item_id] = item_input_emb_unordered[item_id]
 
         # Transform embeddings from dict to tensor
-        self.user_input_emb = torch.cat(tuple([user_input_emb[i] for i in user_input_emb]), dim = 0).float()
-        self.item_input_emb= torch.cat(tuple([item_input_emb[i] for i in item_input_emb]), dim = 0).float()
+        self.user_input_emb = nn.functional.normalize(torch.cat(tuple([user_input_emb[i] for i in user_input_emb]), dim = 0).float())
+        self.item_input_emb= nn.functional.normalize(torch.cat(tuple([item_input_emb[i] for i in item_input_emb]), dim = 0).float())
+
+        
+        # self.user_input_emb = nn.functional.normalize(self.user_input_emb)
+        # self.item_input_emb = nn.functional.normalize(self.item_input_emb)
 
         ### Pretrained embedding
         self.user_pretrained_embedding = torch.load(paths["user_pretrained"])
@@ -274,7 +278,7 @@ class RecommenderModel():
         self.train_df = train_full_df
         self.test_df = test_full_df
 
-        self.load_input_embeddings()
+        self.load_input_embeddings(paths = self.paths)
         self._build_graph()
         self._init_model()
     
