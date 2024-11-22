@@ -89,8 +89,8 @@ class GeneralGNN(nn.Module):
     
 
     def reload_embedding(self, new_user_embedding_path="path.csv", new_item_embedding_path="path.csv"):
-        new_user_embedding_df = pd.from_csv(new_user_embedding_path)
-        new_item_embedding_df = pd.from_csv(new_item_embedding_path)
+        new_user_embedding_df = pd.read_csv(new_user_embedding_path)
+        new_item_embedding_df = pd.read_csv(new_item_embedding_path)
 
         user_embeddings = torch.tensor(new_user_embedding_df['embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
         item_embeddings = torch.tensor(new_item_embedding_df['embedding'].apply(ast.literal_eval).tolist(), dtype=torch.float32)
