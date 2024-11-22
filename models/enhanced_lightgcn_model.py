@@ -2,8 +2,11 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
+# from .base_model import BaseModel
+from utils.dataloader import DataLoader
 from utils.metrics import get_top_k_items, calculate_rating_metrics, calculate_ranking_metrics
+# from sklearn.model_selection import train_test_split
+
 import pandas as pd
 import numpy as np
 from typing import Optional, Set, Tuple, Dict, Union
@@ -14,33 +17,66 @@ import torch.nn as nn
 from torch_geometric.data import Data
 import logging
 
-from tqdm import tqdm
+
+from tqdm import tqdm 
 
 
-class LightGCN(nn.Module):
-    def __init__(self, num_users: int, num_items: int, embedding_dim: int, num_layers: int):
-        super(LightGCN, self).__init__()
+class MLP(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(MLP, self).__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+
+        self.fc1 = nn.Linear(self.input_dim, self.hidden_dim)
+        self.fc2 = nn.Linear(self.hidden_dim, self.output_dim)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = nn.ReLU()(x)
+        x = self.fc2(x)
+        x = nn.ReLU()(x)
+
+        return x
+
+class LightGCN2(nn.Module):
+    def __init__(self, num_users: int, num_items: int, embedding_dim: int, num_layers: int, user_input_dim: int, item_input_dim:int, user_content_embedding, item_content_embedding, user_pretrained_embedding, item_pretrained_embedding):
+        super(LightGCN2, self).__init__()
 
         self.num_users = num_users
         self.num_items = num_items
         self.embedding_dim = embedding_dim
         self.num_layers = num_layers
 
-        # Initialize embeddings
-        self.user_embedding = nn.Embedding(num_users, embedding_dim)
-        self.item_embedding = nn.Embedding(num_items, embedding_dim)
-        self._init_embeddings()
+        self.user_input_dim = user_input_dim
+        self.item_input_dim = item_input_dim
+        self.user_content_emb = user_content_embedding
+        self.item_content_emb = item_content_embedding
 
-    def _init_embeddings(self) -> None:
-        # nn.init.normal_(self.user_embedding.weight, std=0.1)
-        # nn.init.normal_(self.item_embedding.weight, std=0.1)
-        nn.init.xavier_uniform_(self.user_embedding.weight)
-        nn.init.xavier_uniform_(self.item_embedding.weight)
+        # Project the meta-path and content-based input embeddings into the same embedding as the pre-trained ones
+        self.mlp_u = MLP(input_dim=self.user_input_dim, hidden_dim=512, output_dim=self.embedding_dim)
+        self.mlp_i = MLP(input_dim=self.item_input_dim, hidden_dim=512, output_dim=self.embedding_dim)
 
+        self.user_pretrained_emb = nn.Embedding.from_pretrained(user_pretrained_embedding)
+        self.item_pretrained_emb = nn.Embedding.from_pretrained(item_pretrained_embedding)
+
+        self.result_dim_reduction = MLP(input_dim=2 * embedding_dim, hidden_dim=2 * embedding_dim, output_dim= embedding_dim)
+        #self.RELU = nn.ReLU()
+
+        
+    
     def forward(self, adj_norm) -> Tuple[torch.Tensor, torch.Tensor]:
+        # Project meta-path and content-based input embeddings to embedding_dim
+        user_input_emb_2 = self.mlp_u(self.user_content_emb)
+        item_input_emb_2 = self.mlp_i(self.item_content_emb)
+
+        self.cat_user_embedding = torch.cat([self.user_pretrained_emb.weight, user_input_emb_2], dim = 1)
+        self.cat_item_embedding = torch.cat([self.item_pretrained_emb.weight, item_input_emb_2], dim = 1)
+
         all_embeddings = torch.cat(
-            [self.user_embedding.weight, 
-             self.item_embedding.weight], dim=0
+            [self.cat_user_embedding, 
+             self.cat_item_embedding], dim=0
         )
         embeddings_list = [all_embeddings]
 
@@ -51,6 +87,8 @@ class LightGCN(nn.Module):
         all_embeddings = torch.stack(embeddings_list, dim=1)
         final_embeddings = torch.mean(all_embeddings, dim=1)  # Mean aggregation
 
+        final_embeddings = self.result_dim_reduction(final_embeddings)
+
         user_embeddings = final_embeddings[: self.num_users]
         item_embeddings = final_embeddings[self.num_users :]
 
@@ -58,7 +96,7 @@ class LightGCN(nn.Module):
 
 
 @typechecked
-class LightGCNModel():
+class LightGCNModel2():
     def __init__(
         self,
         train_set:pd.DataFrame,
@@ -70,16 +108,25 @@ class LightGCNModel():
         batch_size: int = 1024,
         num_negatives: int =4,
         train_alpha: float = 1.0,
+        paths = {"umam": "umam_embeddings.pt", 
+                                                  "umdm":"umdm_embeddings.pt",
+                                                  "umum":"umum_embeddings.pt",
+                                                  "user_content": "user_content_based_embeddings.pt",
+                                                  "item_content": "movie_genre_hot_embeddings.pt",
+                                                  "user_pretrained": "pretrain_user_embeddings.pt",
+                                                  "item_pretrained": "pretrain_item_embeddings.pt"},
         device: str = 'auto'  # 'auto', 'cuda', 'mps', or 'cpu'
     ) -> None:
         super().__init__()
         
         logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - [%(levelname)s]: %(message)s")
-        self.logger = logging.getLogger("LGCN model")
+        self.logger = logging.getLogger("LGCN2 model")
 
+        self.data_loader = DataLoader(size="100k")
         self.train_set = train_set
         self.test_set = test_set
 
+        
         self.num_layers = num_layers
         self.embedding_dim = embedding_dim
         self.learning_rate = learning_rate
@@ -87,6 +134,7 @@ class LightGCNModel():
         self.batch_size = batch_size
         self.num_negatives = num_negatives
         self.train_alpha = train_alpha
+        self.paths = paths
         self.device = self._get_device(device)
 
         self.user2idx = {}
@@ -106,6 +154,7 @@ class LightGCNModel():
         self.model = None
         self.optimizer = None
         self.criterion = nn.BCEWithLogitsLoss()
+
 
     def _get_device(self, device_str: str) -> torch.device:
         if device_str == 'auto':
@@ -135,6 +184,59 @@ class LightGCNModel():
             return torch.device('cpu')
         else:
             raise ValueError("Invalid device option: 'auto', 'cuda', 'mps', 'cpu'.")
+
+    def _load_ratings(self) -> pd.DataFrame:
+        ratings = self.data_loader.load_ratings()
+        self.logger.info("Data Loaded.")
+        # print(ratings.head())
+        return ratings
+
+    def _load_items(self) -> pd.DataFrame:
+        items = self.data_loader.load_items(process_title=True, process_year=True, process_genres=True, genres_as_binary=True)
+        return items
+
+    def _load_user_features(self) -> pd.DataFrame:
+        user_features = self.data_loader.load_user_features(convert_age_to_range=True,convert_occupation_to_code=False)
+        return user_features
+    
+    def load_input_embeddings(self, paths = {"umam": "umam_embeddings.pt", 
+                                                  "umdm":"umdm_embeddings.pt",
+                                                  "umum":"umum_embeddings.pt",
+                                                  "user_content": "user_content_based_embeddings.pt",
+                                                  "item_content": "movie_genre_hot_embeddings.pt",
+                                                  "user_pretrained": "pretrain_user_embeddings.pt",
+                                                  "item_pretrained": "pretrain_item_embeddings.pt"}):
+        
+        ### Content-based and meta-path features
+        # Load the meta-path and content-based features of users
+        umam_embeddings = torch.load(paths['umam'])
+        umdm_embeddings = torch.load(paths['umdm'])
+        umum_embeddings = torch.load(paths['umum'])
+        user_content_embedding = torch.load(paths['user_content'])
+
+        user_input_emb = {}
+        for user_id in self.user2idx:
+            user_input_emb[user_id] = torch.cat((umam_embeddings[user_id], umdm_embeddings[user_id], umum_embeddings[user_id], user_content_embedding[user_id]), dim = 1)
+        
+        del umam_embeddings, umdm_embeddings, umum_embeddings, user_content_embedding # save memory
+
+        # Load the content-based features of items
+        item_input_emb = {}
+        item_input_emb_unordered = torch.load(paths["item_content"])
+        for item_id in self.item2idx:
+            item_input_emb[item_id] = item_input_emb_unordered[item_id]
+
+        # Transform embeddings from dict to tensor
+        self.user_input_emb = nn.functional.normalize(torch.cat(tuple([user_input_emb[i] for i in user_input_emb]), dim = 0).float()).to(self.device)
+        self.item_input_emb= nn.functional.normalize(torch.cat(tuple([item_input_emb[i] for i in item_input_emb]), dim = 0).float()).to(self.device)
+
+        
+        # self.user_input_emb = nn.functional.normalize(self.user_input_emb)
+        # self.item_input_emb = nn.functional.normalize(self.item_input_emb)
+
+        ### Pretrained embedding
+        self.user_pretrained_embedding = torch.load(paths["user_pretrained"]).to(self.device)
+        self.item_pretrained_embedding = torch.load(paths["item_pretrained"]).to(self.device)
 
     def prepare_training_data(self) -> None:
         self.logger.info("Preparing data...")
@@ -178,6 +280,7 @@ class LightGCNModel():
         self.train_df = train_full_df
         self.test_df = test_full_df
 
+        self.load_input_embeddings(paths = self.paths)
         self._build_graph()
         self._init_model()
     
@@ -210,7 +313,7 @@ class LightGCNModel():
         
         neg_df = pd.DataFrame(neg_samples)
 
-        # Make sure that the correct number of negative samples are generated for each user
+        # 确认每个用户生成了正确数量的负样本
         user_neg_counts_generated = neg_df['user_idx'].value_counts().to_dict()
         for user, expected_count in user_neg_counts.items():
             actual_count = user_neg_counts_generated.get(user, 0)
@@ -248,12 +351,18 @@ class LightGCNModel():
         self.adj_norm = adj_norm.coalesce().to(self.device)
 
     def _init_model(self):
-        self.logger.info("initilizing model...")
-        self.model = LightGCN(
+        self.logger.info("initializing model...")
+        self.model = LightGCN2(
             num_users=self.num_users,
             num_items=self.num_items,
             embedding_dim=self.embedding_dim,
-            num_layers=self.num_layers
+            num_layers=self.num_layers,
+            user_input_dim=self.user_input_emb.shape[1],
+            item_input_dim=self.item_input_emb.shape[1],
+            user_content_embedding=self.user_input_emb,
+            item_content_embedding=self.item_input_emb,
+            user_pretrained_embedding=self.user_pretrained_embedding,
+            item_pretrained_embedding=self.item_pretrained_embedding
         ).to(self.device)
 
         # adam + l2
@@ -275,16 +384,16 @@ class LightGCNModel():
         pos_len = len(pos_user_ids)
         required_neg_samples = pos_len * self.num_negatives
 
-       # Check if the number of negative samples is sufficient
+        # 检查负样本数量是否足够
         actual_neg_samples = len(neg_user_ids)
         if actual_neg_samples < required_neg_samples:
             raise ValueError(f"Not enough negative samples: required {required_neg_samples}, but got {actual_neg_samples}")
 
-        # Check if the number of negative samples is sufficient
+        # 截取所需数量的负样本
         neg_user_ids = neg_user_ids[:required_neg_samples]
         neg_item_ids = neg_item_ids[:required_neg_samples]
 
-        # Repeat positive samples to match the number of negative samples
+        # 重复正样本以匹配负样本数量
         pos_user_ids_bpr = np.repeat(pos_user_ids, self.num_negatives)
         pos_item_ids_bpr = np.repeat(pos_item_ids, self.num_negatives)
         
@@ -315,10 +424,11 @@ class LightGCNModel():
             
             # BPR loss
             loss = -torch.mean(torch.log(torch.sigmoid(pos_scores - neg_scores) + 1e-10))
-
+            
             loss.backward()
             self.optimizer.step()
-    
+
+
     
     def _predict_scores(self) -> torch.Tensor:
         self.model.eval()
@@ -381,10 +491,12 @@ class LightGCNModel():
         return top_k_items[['user', 'item', 'prediction']]
 
 
+
+
+
 # def main():
-#     model = LightGCNModel(
-#         train_set=[],
-#         test_set=[],
+#     model = LightGCNModel2(
+#         size="100k",
 #         embedding_dim=64,
 #         num_layers=5,
 #         learning_rate=0.01,
