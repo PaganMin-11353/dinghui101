@@ -218,7 +218,10 @@ class RecommenderModel():
         del umam_embeddings, umdm_embeddings, umum_embeddings, user_content_embedding # save memory
 
         # Load the content-based features of items
-        item_input_emb = torch.load(paths["item_content"])
+        item_input_emb = {}
+        item_input_emb_unordered = torch.load(paths["item_content"])
+        for item_id in self.item2idx:
+            item_input_emb[item_id] = item_input_emb_unordered[item_id]
 
         # Transform embeddings from dict to tensor
         self.user_input_emb = torch.cat(tuple([user_input_emb[i] for i in user_input_emb]), dim = 0).float()
