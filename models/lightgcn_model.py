@@ -3,7 +3,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-from utils.metrics import get_top_k_items
+from utils.metrics import get_top_k_items, calculate_rating_metrics, calculate_ranking_metrics
 import pandas as pd
 import numpy as np
 from typing import Optional, Set, Tuple, Dict, Union
@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 from torch_geometric.data import Data
 import logging
+
+from tqdm import tqdm
 
 
 class LightGCN(nn.Module):
@@ -296,7 +298,7 @@ class LightGCNModel():
         pos_item_ids_reg = torch.from_numpy(pos_item_ids).long().to(self.device)
         pos_ratings_reg = torch.from_numpy(pos_ratings).float().to(self.device)
 
-        for epoch in range(1, self.epochs + 1):
+        for epoch in tqdm(range(self.epochs)):
             self.optimizer.zero_grad()
 
             # forward
@@ -312,19 +314,11 @@ class LightGCNModel():
             neg_scores = torch.sum(u_neg * i_neg, dim=1)  # (N,)
             
             # BPR loss
-            bpr_loss = -torch.mean(torch.log(torch.sigmoid(pos_scores - neg_scores) + 1e-10))
-            
-            # MSE Loss for rating prediction
-            pred_ratings = torch.sum(user_emb[pos_user_ids_reg] * item_emb[pos_item_ids_reg], dim=1)  # (N,)
-            mse_loss = nn.functional.mse_loss(pred_ratings, pos_ratings_reg)
-            
-            # Combine losses
-            loss = bpr_loss + self.train_alpha * mse_loss
+            loss = -torch.mean(torch.log(torch.sigmoid(pos_scores - neg_scores) + 1e-10))
 
             loss.backward()
             self.optimizer.step()
-
-            self.logger.info(f"Epoch {epoch}/{self.epochs}, Loss: {loss.item():.4f}")
+    
     
     def _predict_scores(self) -> torch.Tensor:
         self.model.eval()
