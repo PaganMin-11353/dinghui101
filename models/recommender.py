@@ -37,6 +37,23 @@ class TransformerLayer(nn.Module):
 
         return updated_user_embedding
     
+class MLP(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+
+        self.fc1 = nn.Linear(self.input_dim, self.hidden_dim)
+        self.fc2 = nn.Linear(self.hidden_dim, self.output_dim)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = nn.ReLU()(x)
+        x = self.fc2(x)
+        x = nn.ReLU()(x)
+
+        return x
+    
 
 class Recommender(nn.Module):
     def __init__(self, embedding_dim, user_input_dim, item_input_dim, num_heads=8):
@@ -48,11 +65,11 @@ class Recommender(nn.Module):
         self.num_heads = num_heads
 
         # Project the meta-path and content-based input embeddings into the same embedding as the pre-trained ones
-        self.mlp_u = nn.Linear(self.user_input_dim, self.embedding_dim)
-        self.mlp_i = nn.Linear(self.item_input_dim, self.embedding_dim)
+        self.mlp_u = MLP(input_dim=self.user_input_dim, hidden_dim= 512, output_dim=self.embedding_dim)
+        self.mlp_i = MLP(input_dim=self.item_input_dim, hidden_dim= 512, output_dim=self.embedding_dim)
 
         # To be applied on the concatenation of pre-trained and feature-aware embeddings (2 * embedding_dim)
-        self.transformer_layer = TransformerLayer(embedding_dim = self.embedding_dim, num_heads=self.num_heads)
+        self.transformer_layer = TransformerLayer(embedding_dim = 2 * self.embedding_dim, num_heads=self.num_heads)
 
     def forward(self, user_input_emb, item_input_emb, user_pretrained_embedding, item_pretrained_embedding):
         # Project meta-path and content-based input embeddings to embedding_dim
@@ -60,10 +77,10 @@ class Recommender(nn.Module):
         item_input_emb_2 = self.mlp_i(item_input_emb)
 
         # Concat pretrained and input embedding -> dim = 2 * embedding_dim
-        # user_embedding = torch.cat((user_pretrained_embedding, user_input_emb_2), dim = -1)
-        # item_embedding = torch.cat((item_pretrained_embedding, item_input_emb_2), dim = -1)
-        user_embedding = user_input_emb_2
-        item_embedding = item_input_emb_2
+        user_embedding = torch.cat((user_pretrained_embedding, user_input_emb_2), dim = -1)
+        item_embedding = torch.cat((item_pretrained_embedding, item_input_emb_2), dim = -1)
+        # user_embedding = user_input_emb_2
+        # item_embedding = item_input_emb_2
         # Updated user embedding via transformation layer
         updated_user_embedding = self.transformer_layer(user_embedding, item_embedding)
 
