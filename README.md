@@ -1,4 +1,4 @@
-Unified Graph and Feature-Based Embedding Framework for Cold-Start User and Item Recommendations
+# Unified Graph and Feature-Based Embedding Framework for Cold-Start User and Item Recommendations
 
 ## Introduction
 This project focuses on developing a Unified Graph and Feature-Based Embedding Framework to address the challenges of cold-start recommendations.(CS5284 Team1)
